@@ -140,6 +140,88 @@ displacement, never inflate it. **69.4% is a floor.**
 
 ---
 
+## Cohort D — the people who never got a bed
+
+The placement analysis is conditioned on placement. Cohort D is everyone else:
+still waiting, withdrew, or died before a bed opened. `sql/05_waitlist_spells.sql`
+and `analysis/06_exit_classification.py` cover it.
+
+**The census is daily** — 1,826 consecutive dates over five years, one row per
+person per rated site per day. It has to be collapsed, but *not* by dropping
+`census_date`, which destroys the entry date the whole question rests on.
+Collapse into **spells** — a continuous run of days on the list, where a gap of
+more than one day means the person came off and returned.
+
+Why spells rather than min/max per person: **29.3% of people leave the list and
+come back.** Merging those separate waits inflated the longest wait from a
+median of 45 days to 247 — a 5x overstatement.
+
+### Three misreadings this code exists to prevent
+
+**1. A death date is not "died waiting."** 37.9% of spells carry one; only
+17.3% of those died without ever being placed. The rest were placed and died in
+care afterwards, which is what long-term care is. Reading the first as the
+second overstates deaths-on-the-waitlist by **5.8x** — and it is the most
+quotable number in the whole analysis, so it is the one that will be repeated.
+
+**2. `current_location` is not a join key.** It is a census snapshot that moves
+while people wait (52.5% change setting); `source_location` is fixed at
+admission. Joining them drops ~13% of admissions outright and makes placed
+people look like they were never placed — silently, because it is a LEFT JOIN.
+It is an output column, never a key. Taking `birth_date` from the admissions
+side has the same shape of failure: it leaves every never-placed person with no
+age, which is exactly the group that needs one.
+
+**3. Vanishing from the census is not an exit.** 39% of apparent
+disappearances continue under a new `patient_transfer_id` within 90 days. The
+person was re-registered, not lost. Without that test the unexplained residual
+reads 18.8%; with it, 11.4%.
+
+### Exit classification, five years province-wide
+
+82,994 spells · 52,873 people · all care types including hospice and palliative.
+
+| Exit | Spells | Share |
+|---|---|---|
+| Placed | 33,509 | 40.4% |
+| Placed, died later in care | 21,030 | 25.3% |
+| Left list, outcome unknown | 9,501 | 11.4% |
+| **Died waiting** | **5,445** | **6.6%** |
+| Left list, died later | 4,983 | 6.0% |
+| Re-registered under a new transfer | 4,240 | 5.1% |
+| Still waiting (censored) | 2,415 | 2.9% |
+| Returned to the list later | 1,869 | 2.3% |
+
+### Two figures that must travel with a qualifier
+
+**The died-waiting window is a judgement call.** 7 days gives 4,555; 30 gives
+5,445; 180 gives 7,199 — a 58% spread. State the window in the same sentence
+as the number, every time, and do not let it drift between drafts.
+
+**Hospice and palliative inflate every death figure.** 58% of spells entering
+from a hospice or palliative setting carry a death date, against 37.9% overall.
+Those clients were expected to die. Report Type A/B separately — the SQL tags
+`care_stream` for exactly this.
+
+Also worth carrying: of those who left without a placement, 83% had an
+`assess_approved_date` and were genuinely ready for a bed. The other 17% were
+still in process and were never waiting; they do not belong in cohort D.
+
+### Still open
+
+`PERS_REAP_END_DATE` on the registry is a registration/eligibility end, not a
+death date — registration also ends on out-of-province migration and
+administrative lapse. Vital statistics
+(`DB_SOURCE_AH_VITAL_STATS.CURATED.TB_VITAL_STATS_DEATHS_ADHOC`, joined
+`phn = stkh_num_1`) is the source used here, and it validates cleanly: 6
+impossible records out of 82,994.
+
+The 9,501 "outcome unknown" spells are the last real gap — candidates are
+withdrawal, out-of-province moves, or placement into a facility the admissions
+table does not cover.
+
+---
+
 ## Repository layout
 
 ```
@@ -147,8 +229,10 @@ sql/
   01_demand_capacity_report.sql   the report tables — every published figure
   02_client_level_detail.sql      one row per episode, for validation
   03_waitlist_rated_sites.sql     the waitlist census, for recorded preference
+  05_waitlist_spells.sql          cohort D — spells, exits, deaths
 analysis/
   04_displacement_check.py        joins 02 and 03 — the 138-of-220 finding
+  06_exit_classification.py       validates and classifies 05's output
 reports/
   cochrane-report.html            full evidence paper
   cochrane-onepager.html          one-page summary of findings
@@ -169,6 +253,9 @@ snowsql -f sql/01_demand_capacity_report.sql
 
 # displacement cross-reference, from the two CSV exports
 python3 analysis/04_displacement_check.py placement.csv waitlist.csv
+
+# cohort D — classify exits, with the sensitivity and integrity checks
+python3 analysis/06_exit_classification.py spells.csv --window 30 --rereg 90
 
 # regenerate the Word documents after editing the builders
 cd build && npm install && node build-docx.js && node build-onepager-docx.js
@@ -213,9 +300,11 @@ Not blocking anything published, but each would strengthen the case:
    admissions per 1,000 seniors — benchmarkable against comparable Alberta
    communities and projectable against the town's growth. Single most useful
    number not yet in hand, and it needs no external request.
-2. **Waitlist history before 2021-04-01**, plus exit and closure reasons. Would
-   add the fourth cohort (residents who never received a placement) and turn
-   the 138 floor into a count.
+2. **Waitlist history before 2021-04-01.** Cohort D is now measurable without
+   it (see above — exits are derived from admissions and vital statistics
+   rather than a closure-reason field, which does not exist in the source).
+   Earlier history would turn the 138 displacement floor into a count and
+   resolve the spells whose entry predates the census window.
 3. **Confirm with ALA:** the meaning of `rating = 0` in the waitlist source,
    and the DAL → Type B crosswalk in writing.
 4. **An allocation question, deliberately unpublished.** 62% of Town residents
