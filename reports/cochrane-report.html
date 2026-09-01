@@ -1,0 +1,743 @@
+<title>Where Cochrane Residents Are Placed</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Spectral:ital,wght@0,400;0,600;0,700;1,400&family=Public+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+
+<style>
+:root{
+  --ground:#FAFAF7;
+  --card:#FFFFFF;
+  --ink:#15201C;
+  --ink-2:#3A4844;
+  --muted:#5C6862;
+  --faint:#8B958F;
+  --rule:#E1E5E0;
+  --rule-soft:#EDF0EC;
+  --local:#058C72;
+  --local-wash:#E6F2EE;
+  --outside:#C4671A;
+  --outside-wash:#FAEEE3;
+  --neutral-mark:#B4BCB6;
+  --shadow:0 1px 2px rgba(21,32,28,.05), 0 8px 24px -16px rgba(21,32,28,.18);
+  --maxw:64rem;
+  --textw:37rem;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --ground:#101513;
+    --card:#171E1B;
+    --ink:#E6EBE7;
+    --ink-2:#C3CCC7;
+    --muted:#96A29B;
+    --faint:#6C7873;
+    --rule:#28322D;
+    --rule-soft:#1F2825;
+    --local:#2AA184;
+    --local-wash:#15302A;
+    --outside:#D07C38;
+    --outside-wash:#33231492;
+    --neutral-mark:#4A5551;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px -16px rgba(0,0,0,.7);
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#101513;
+  --card:#171E1B;
+  --ink:#E6EBE7;
+  --ink-2:#C3CCC7;
+  --muted:#96A29B;
+  --faint:#6C7873;
+  --rule:#28322D;
+  --rule-soft:#1F2825;
+  --local:#2AA184;
+  --local-wash:#15302A;
+  --outside:#D07C38;
+  --outside-wash:#33231492;
+  --neutral-mark:#4A5551;
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px -16px rgba(0,0,0,.7);
+}
+
+*{box-sizing:border-box}
+body{
+  background:var(--ground);
+  color:var(--ink);
+  font-family:"Public Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+  font-size:16px;
+  line-height:1.62;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:var(--maxw);margin:0 auto;padding:0 1.75rem 6rem}
+.col{max-width:var(--textw)}
+
+/* ── masthead ─────────────────────────────────────────── */
+.masthead{padding:4.5rem 0 2.5rem;border-bottom:2px solid var(--ink)}
+.eyebrow{
+  font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+  font-size:.7rem;font-weight:500;letter-spacing:.13em;text-transform:uppercase;
+  color:var(--muted);
+}
+h1{
+  font-family:Spectral,Georgia,"Times New Roman",serif;
+  font-weight:700;font-size:clamp(2.3rem,5.5vw,3.4rem);line-height:1.06;
+  letter-spacing:-.018em;margin:.9rem 0 0;text-wrap:balance;max-width:20ch;
+}
+.standfirst{
+  font-family:Spectral,Georgia,serif;font-size:1.16rem;line-height:1.55;
+  color:var(--ink-2);margin:1.15rem 0 0;max-width:44ch;font-style:italic;
+}
+.meta{
+  display:flex;flex-wrap:wrap;gap:0 2.5rem;margin-top:2.25rem;
+  font-family:"IBM Plex Mono",monospace;font-size:.74rem;color:var(--muted);
+}
+.meta div{display:flex;flex-direction:column;gap:.15rem;padding:.15rem 0}
+.meta dt{color:var(--faint);letter-spacing:.08em;text-transform:uppercase;font-size:.66rem}
+.meta dd{margin:0;color:var(--ink-2);font-weight:500}
+
+/* ── sections ─────────────────────────────────────────── */
+section{padding-top:3.75rem}
+.sec-head{display:flex;gap:1rem;align-items:baseline;margin-bottom:1.5rem}
+.sec-num{
+  font-family:"IBM Plex Mono",monospace;font-size:.8rem;font-weight:600;
+  color:var(--local);flex:none;padding-top:.35rem;
+}
+h2{
+  font-family:Spectral,Georgia,serif;font-weight:600;
+  font-size:clamp(1.5rem,3vw,1.95rem);line-height:1.18;letter-spacing:-.012em;
+  margin:0;text-wrap:balance;
+}
+h3{
+  font-family:"Public Sans",sans-serif;font-weight:700;font-size:1rem;
+  letter-spacing:-.005em;margin:2.5rem 0 .6rem;
+}
+h4{
+  font-family:"IBM Plex Mono",monospace;font-size:.72rem;font-weight:600;
+  letter-spacing:.12em;text-transform:uppercase;color:var(--muted);
+  margin:2rem 0 .8rem;
+}
+p{margin:0 0 1.05rem}
+.col p:last-child{margin-bottom:0}
+strong{font-weight:600;color:var(--ink)}
+a{color:var(--local)}
+
+ul{margin:0 0 1.05rem;padding-left:1.15rem}
+li{margin-bottom:.45rem}
+li::marker{color:var(--faint)}
+
+code{
+  font-family:"IBM Plex Mono",monospace;font-size:.86em;
+  background:var(--rule-soft);padding:.1em .35em;border-radius:3px;color:var(--ink-2);
+}
+
+/* ── hero stats ───────────────────────────────────────── */
+.stats{
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));
+  gap:1px;background:var(--rule);border:1px solid var(--rule);
+  margin:2.25rem 0 0;border-radius:2px;overflow:hidden;
+}
+.stat{background:var(--card);padding:1.5rem 1.4rem 1.35rem;display:flex;flex-direction:column;gap:.3rem}
+.stat-fig{
+  font-family:Spectral,Georgia,serif;font-weight:700;
+  font-size:2.7rem;line-height:1;letter-spacing:-.025em;
+  font-variant-numeric:tabular-nums;
+}
+.stat-fig.is-out{color:var(--outside)}
+.stat-fig.is-in{color:var(--local)}
+.stat-lab{font-size:.845rem;line-height:1.4;color:var(--ink-2);max-width:24ch}
+.stat-sub{
+  font-family:"IBM Plex Mono",monospace;font-size:.7rem;color:var(--faint);
+  margin-top:.1rem;
+}
+
+/* ── figures / charts ─────────────────────────────────── */
+figure{margin:2.25rem 0 0;background:var(--card);border:1px solid var(--rule);
+  border-radius:2px;padding:1.5rem 1.5rem 1.35rem;box-shadow:var(--shadow)}
+figcaption{
+  font-size:.8rem;color:var(--muted);line-height:1.5;
+  margin-top:1.15rem;padding-top:.85rem;border-top:1px solid var(--rule-soft);
+}
+.fig-title{font-weight:700;font-size:.94rem;margin:0 0 .25rem;letter-spacing:-.004em}
+.fig-sub{font-size:.8rem;color:var(--muted);margin:0 0 1.35rem}
+
+.legend{display:flex;gap:1.25rem;flex-wrap:wrap;margin:0 0 1.25rem;
+  font-size:.78rem;color:var(--ink-2)}
+.legend span{display:inline-flex;align-items:center;gap:.45rem}
+.swatch{width:11px;height:11px;border-radius:2px;flex:none}
+.sw-local{background:var(--local)}
+.sw-out{background:var(--outside)}
+.sw-neutral{background:var(--neutral-mark)}
+
+.rows{display:flex;flex-direction:column;gap:1.1rem}
+.row-lab{display:flex;justify-content:space-between;align-items:baseline;
+  gap:1rem;margin-bottom:.4rem}
+.row-name{font-size:.86rem;font-weight:600}
+.row-name small{display:block;font-weight:400;color:var(--muted);font-size:.76rem}
+.row-total{font-family:"IBM Plex Mono",monospace;font-size:.74rem;
+  color:var(--faint);font-variant-numeric:tabular-nums;white-space:nowrap}
+
+.bar{display:flex;gap:2px;height:30px;width:100%}
+.seg{
+  display:flex;align-items:center;padding:0 .55rem;min-width:0;
+  font-family:"IBM Plex Mono",monospace;font-size:.72rem;font-weight:600;
+  color:#fff;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;
+}
+.seg-local{background:var(--local);border-radius:2px 0 0 2px}
+.seg-out{background:var(--outside);border-radius:0 2px 2px 0}
+.seg-neutral{background:var(--neutral-mark);color:var(--ink)}
+.seg:only-child{border-radius:2px}
+.seg.tiny{padding:0;justify-content:center}
+.seg.tiny span{display:none}
+
+/* single-series proportion bars */
+.mono-bar{height:26px;background:var(--rule-soft);border-radius:2px;
+  display:flex;align-items:center;position:relative}
+.mono-fill{height:100%;background:var(--local);border-radius:2px;min-width:3px}
+.mono-val{position:absolute;right:.55rem;font-family:"IBM Plex Mono",monospace;
+  font-size:.72rem;font-weight:600;color:var(--ink-2);font-variant-numeric:tabular-nums}
+
+/* ── cohort matrix ────────────────────────────────────── */
+.matrix{
+  display:grid;grid-template-columns:auto 1fr 1fr;gap:1px;
+  background:var(--rule);border:1px solid var(--rule);border-radius:2px;
+  overflow:hidden;margin:1.75rem 0 0;
+}
+.matrix > *{background:var(--card);padding:1rem 1.1rem}
+.mx-corner{background:var(--rule-soft)}
+.mx-head{
+  background:var(--rule-soft);font-family:"IBM Plex Mono",monospace;
+  font-size:.7rem;font-weight:600;letter-spacing:.09em;text-transform:uppercase;
+  color:var(--muted);display:flex;align-items:flex-end;
+}
+.mx-side{
+  background:var(--rule-soft);font-family:"IBM Plex Mono",monospace;
+  font-size:.7rem;font-weight:600;letter-spacing:.09em;text-transform:uppercase;
+  color:var(--muted);display:flex;align-items:center;max-width:11rem;
+}
+.mx-cell{display:flex;flex-direction:column;gap:.3rem;min-height:6.5rem}
+.mx-code{
+  font-family:"IBM Plex Mono",monospace;font-weight:600;font-size:1.5rem;
+  line-height:1;letter-spacing:-.02em;
+}
+.mx-code.c-in{color:var(--local)}
+.mx-code.c-out{color:var(--outside)}
+.mx-code.c-off{color:var(--faint)}
+.mx-desc{font-size:.82rem;line-height:1.45;color:var(--ink-2)}
+.mx-n{font-family:"IBM Plex Mono",monospace;font-size:.72rem;color:var(--faint);
+  margin-top:auto;font-variant-numeric:tabular-nums}
+
+/* ── tables ───────────────────────────────────────────── */
+.tablewrap{overflow-x:auto;margin:1.5rem 0 0;border:1px solid var(--rule);
+  border-radius:2px;background:var(--card)}
+table{border-collapse:collapse;width:100%;font-size:.845rem}
+caption{
+  text-align:left;padding:1rem 1.1rem .35rem;font-weight:700;font-size:.9rem;
+}
+thead th{
+  font-family:"IBM Plex Mono",monospace;font-size:.68rem;font-weight:600;
+  letter-spacing:.08em;text-transform:uppercase;color:var(--muted);
+  text-align:right;padding:.7rem 1.1rem;border-bottom:1px solid var(--rule);
+  background:var(--rule-soft);white-space:nowrap;
+}
+thead th:first-child{text-align:left}
+tbody td{padding:.62rem 1.1rem;border-bottom:1px solid var(--rule-soft);
+  text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+tbody td:first-child{text-align:left;font-weight:500;white-space:normal}
+tbody tr:last-child td{border-bottom:none}
+tbody tr.total td{font-weight:700;background:var(--rule-soft);
+  border-top:1px solid var(--rule)}
+.v-in{color:var(--local);font-weight:600}
+.v-out{color:var(--outside);font-weight:600}
+
+/* ── callouts ─────────────────────────────────────────── */
+.note{
+  border-left:3px solid var(--local);background:var(--local-wash);
+  padding:1.15rem 1.3rem;border-radius:0 2px 2px 0;margin:2rem 0 0;
+  font-size:.905rem;line-height:1.58;
+}
+.note.warn{border-left-color:var(--outside);background:var(--outside-wash)}
+.note p{margin:0 0 .7rem}
+.note p:last-child{margin:0}
+.note-lab{
+  font-family:"IBM Plex Mono",monospace;font-size:.68rem;font-weight:600;
+  letter-spacing:.11em;text-transform:uppercase;color:var(--local);
+  display:block;margin-bottom:.5rem;
+}
+.note.warn .note-lab{color:var(--outside)}
+
+.pull{
+  font-family:Spectral,Georgia,serif;font-size:1.32rem;line-height:1.45;
+  color:var(--ink);border-top:2px solid var(--ink);border-bottom:1px solid var(--rule);
+  padding:1.5rem 0;margin:2.5rem 0 0;max-width:44ch;text-wrap:balance;
+}
+
+.method-list{counter-reset:m;list-style:none;padding:0;margin:1.5rem 0 0;
+  display:flex;flex-direction:column;gap:1.35rem}
+.method-list li{counter-increment:m;margin:0;padding-left:2.6rem;position:relative}
+.method-list li::before{
+  content:counter(m);position:absolute;left:0;top:.05rem;
+  font-family:"IBM Plex Mono",monospace;font-size:.72rem;font-weight:600;
+  color:var(--local);border:1px solid var(--rule);border-radius:2px;
+  width:1.7rem;height:1.7rem;display:flex;align-items:center;justify-content:center;
+  background:var(--card);
+}
+.method-list b{display:block;font-weight:700;margin-bottom:.15rem;font-size:.94rem}
+.method-list span{font-size:.9rem;color:var(--ink-2);line-height:1.55}
+
+footer{margin-top:5rem;padding-top:1.75rem;border-top:1px solid var(--rule);
+  font-family:"IBM Plex Mono",monospace;font-size:.72rem;color:var(--faint);
+  line-height:1.7}
+
+@media (max-width:640px){
+  .matrix{grid-template-columns:1fr}
+  .mx-side,.mx-corner{display:none}
+  .mx-head{display:none}
+  .stat-fig{font-size:2.3rem}
+}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+
+<div class="wrap">
+
+<header class="masthead">
+  <p class="eyebrow">Bethany Cochrane &amp; Big Hill Lodge campus of care · Evidence paper 01</p>
+  <h1>Where Cochrane Residents Are Placed</h1>
+  <p class="standfirst">Seven in ten Town of Cochrane residents who enter continuing care receive their first placement somewhere else. Meanwhile most beds in Cochrane's own facilities go to people from outside the town.</p>
+  <dl class="meta">
+    <div><dt>Period</dt><dd>FY 2022 – FY 2026</dd></div>
+    <div><dt>Population</dt><dd>317 Town residents</dd></div>
+    <div><dt>Scope</dt><dd>Type A &amp; Type B (level 4)</dd></div>
+    <div><dt>Sources</dt><dd>Placement system · AB registry</dd></div>
+    <div><dt>Status</dt><dd>Validated</dd></div>
+  </dl>
+</header>
+
+<!-- ══ 1 ══════════════════════════════════════════════ -->
+<section>
+  <div class="sec-head"><span class="sec-num">01</span><h2>What this measures</h2></div>
+  <div class="col">
+    <p>Two questions sit at the centre of the campus-of-care case, and they are not the same question.</p>
+    <p><strong>How much continuing care demand does the Town of Cochrane generate, and how much of it is served locally?</strong> That is a question about residents — people whose need for care arose while they lived in Cochrane.</p>
+    <p><strong>Who occupies the beds that already exist in Cochrane?</strong> That is a question about facilities, and the people filling them may or may not be from the town.</p>
+    <p>Answering both requires knowing, for every person placed into continuing care, where they actually lived before they needed it. That turns out to be the hard part, and Section 02 explains how it was solved.</p>
+  </div>
+
+  <div class="stats">
+    <div class="stat">
+      <span class="stat-fig">317</span>
+      <span class="stat-lab">Town of Cochrane residents entered continuing care</span>
+      <span class="stat-sub">FY2022–26, first-ever placement</span>
+    </div>
+    <div class="stat">
+      <span class="stat-fig is-out">69.4%</span>
+      <span class="stat-lab">were first placed outside Cochrane</span>
+      <span class="stat-sub">220 of 317 people</span>
+    </div>
+    <div class="stat">
+      <span class="stat-fig is-out">84.8%</span>
+      <span class="stat-lab">for long-term care specifically</span>
+      <span class="stat-sub">140 of 165 people</span>
+    </div>
+    <div class="stat">
+      <span class="stat-fig">57.3%</span>
+      <span class="stat-lab">of placements into Cochrane facilities went to non-residents</span>
+      <span class="stat-sub">197 of 344 admissions</span>
+    </div>
+  </div>
+</section>
+
+<!-- ══ 2 ══════════════════════════════════════════════ -->
+<section>
+  <div class="sec-head"><span class="sec-num">02</span><h2>How residence was determined</h2></div>
+  <div class="col">
+    <p>This is the part of the method that will be unfamiliar, and it is where the analysis either holds or fails. It is worth reading before any figure is used.</p>
+
+    <h3>The problem with the obvious approach</h3>
+    <p>The placement system records where people were <em>admitted</em>. It does not reliably record where they <em>lived</em>. Three fields look as though they should answer "was this person from Cochrane," and none of them do.</p>
+    <ul>
+      <li><strong>Source location</strong> is the facility a person arrived from, not their home. Someone who went home → hospital → a Calgary nursing home → Bethany Cochrane appears as arriving from Calgary.</li>
+      <li><strong>Address history</strong> updates to the <em>facility</em> on admission. Within this cohort, 50 address records point at the Bethany Cochrane campus itself. Counting those as Cochrane residents would let the destination facility manufacture its own demand. The same address also appears in 24 different spellings.</li>
+      <li><strong>Postal code</strong> is recorded inconsistently and is frequently stale.</li>
+    </ul>
+  </div>
+
+  <div class="note">
+    <span class="note-lab">The method</span>
+    <p><strong>The provincial registry holds one row per person per fiscal year</strong> — the postal code they lived at that year, going back to the 1990s. It is a longitudinal record of where every Albertan lived, every year.</p>
+    <p>That allows a question no placement system can answer: <strong>where did this person live in the years <em>before</em> they entered care?</strong> Pre-care years cannot contain a facility address, because the person was not yet in a facility. The contamination problem disappears — not by cleaning the data, but by choosing a window in which it cannot occur.</p>
+  </div>
+
+  <ol class="method-list">
+    <li>
+      <b>Find the moment care began</b>
+      <span>For each person, locate their first-ever Type A or Type B admission — the point at which they entered residential care. Day programs and hospital transition units are excluded from this test: they are not residential care, and anchoring on them sits a median of 1.6 years, and up to 6.6 years, too early. Applying that restriction changed the anchor for 21% of the cohort.</span>
+    </li>
+    <li>
+      <b>Look back three fiscal years</b>
+      <span>Read the registry address for the three years ending the year <em>before</em> care began. The entry year itself is excluded so that a mid-year move into a facility cannot leak in. Three years matches the health authority's own lookback cap; in practice the window length is immaterial here — two-year and five-year windows return an identical set of people.</span>
+    </li>
+    <li>
+      <b>Resolve the postal code to a real boundary</b>
+      <span>Town of Cochrane is the Statistics Canada census subdivision — the legal municipal boundary, 568 postal codes. Two tempting shortcuts were rejected: the reference table's <code>municipality</code> field labels 22 Rocky View County codes as Cochrane, and the T4C postal prefix splits 562 Town against 41 county addresses.</span>
+    </li>
+    <li>
+      <b>Fix residence once, per person</b>
+      <span>A person's origin does not change because they later moved beds. Residence is determined at entry to care and never recalculated, so a transfer between two Cochrane facilities cannot convert an outside resident into a local one.</span>
+    </li>
+  </ol>
+
+  <div class="col">
+    <h3>Town versus catchment</h3>
+    <p>Two boundaries are reported separately. <strong>Town of Cochrane</strong> (568 postal codes) is the municipality. The <strong>Cochrane catchment</strong> (1,177 codes) adds Springbank and rural Rocky View — areas the facilities serve but the town does not govern. The headline uses the Town. The catchment adds a further 86 residents, of whom 81 were also placed outside Cochrane.</p>
+  </div>
+</section>
+
+<!-- ══ 3 ══════════════════════════════════════════════ -->
+<section>
+  <div class="sec-head"><span class="sec-num">03</span><h2>Cohort definitions</h2></div>
+  <div class="col">
+    <p>Residence and placement destination combine into four groups. Every person and every admission in this analysis falls into exactly one of them.</p>
+  </div>
+
+  <div class="matrix">
+    <div class="mx-corner"></div>
+    <div class="mx-head">Placed in Cochrane</div>
+    <div class="mx-head">Placed outside Cochrane</div>
+
+    <div class="mx-side">Cochrane resident</div>
+    <div class="mx-cell">
+      <span class="mx-code c-in">A</span>
+      <span class="mx-desc">Local need met locally. The share of the town's own demand that Cochrane's facilities absorbed.</span>
+      <span class="mx-n">97 people · 30.6% of Town demand</span>
+    </div>
+    <div class="mx-cell">
+      <span class="mx-code c-out">C</span>
+      <span class="mx-desc">Local need served elsewhere. Residents who had to leave the town to receive care.</span>
+      <span class="mx-n">220 people · 69.4% of Town demand</span>
+    </div>
+
+    <div class="mx-side">Not a Cochrane resident</div>
+    <div class="mx-cell">
+      <span class="mx-code c-in">B</span>
+      <span class="mx-desc">Outside demand on local capacity. People from elsewhere occupying beds in Cochrane.</span>
+      <span class="mx-n">189 people · 197 admissions</span>
+    </div>
+    <div class="mx-cell">
+      <span class="mx-code c-off">—</span>
+      <span class="mx-desc">Out of scope. Bears on neither Cochrane demand nor Cochrane capacity.</span>
+      <span class="mx-n">excluded</span>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="note">
+      <span class="note-lab">Reading the arithmetic</span>
+      <p><strong>A + C</strong> is total Town demand. <strong>A + B</strong> is total use of Cochrane's capacity. <strong>C ÷ (A + C)</strong> is the share of local demand that left town.</p>
+      <p>Demand is counted per <em>person</em>, on their first-ever placement — did the need get met locally the first time it arose. Capacity use is counted per <em>admission</em>, because each one occupies a bed. Person counts must never be summed across years; the same individual recurs.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ══ 4 ══════════════════════════════════════════════ -->
+<section>
+  <div class="sec-head"><span class="sec-num">04</span><h2>Local demand and where it went</h2></div>
+  <div class="col">
+    <p>Of 317 Town of Cochrane residents who entered residential continuing care over the five years, 97 were placed in Cochrane and 220 were placed elsewhere. The gap is far wider for long-term care than for supportive living.</p>
+  </div>
+
+  <figure>
+    <p class="fig-title">First placement of Town of Cochrane residents, by care type</p>
+    <p class="fig-sub">People, FY2022–26. First-ever residential placement.</p>
+    <div class="legend">
+      <span><i class="swatch sw-local"></i> Placed in Cochrane</span>
+      <span><i class="swatch sw-out"></i> Placed outside Cochrane</span>
+    </div>
+    <div class="rows">
+      <div>
+        <div class="row-lab">
+          <span class="row-name">Type A — long-term care<small>Bethany Cochrane is the only local Type A site</small></span>
+          <span class="row-total">165 people</span>
+        </div>
+        <div class="bar">
+          <div class="seg seg-local" style="width:15.2%" title="25 people placed in Cochrane">25</div>
+          <div class="seg seg-out" style="width:84.8%" title="140 people placed outside Cochrane">140 &nbsp;·&nbsp; 84.8% placed outside Cochrane</div>
+        </div>
+      </div>
+      <div>
+        <div class="row-lab">
+          <span class="row-name">Type B — supportive living<small>Hawthorne provides local Type B capacity</small></span>
+          <span class="row-total">152 people</span>
+        </div>
+        <div class="bar">
+          <div class="seg seg-local" style="width:47.4%" title="72 people placed in Cochrane">72 &nbsp;·&nbsp; 47.4%</div>
+          <div class="seg seg-out" style="width:52.6%" title="80 people placed outside Cochrane">80 &nbsp;·&nbsp; 52.6%</div>
+        </div>
+      </div>
+      <div>
+        <div class="row-lab">
+          <span class="row-name">All care types</span>
+          <span class="row-total">317 people</span>
+        </div>
+        <div class="bar">
+          <div class="seg seg-local" style="width:30.6%" title="97 people placed in Cochrane">97 &nbsp;·&nbsp; 30.6%</div>
+          <div class="seg seg-out" style="width:69.4%" title="220 people placed outside Cochrane">220 &nbsp;·&nbsp; 69.4%</div>
+        </div>
+      </div>
+    </div>
+    <figcaption>Where local capacity exists at the right care level, roughly half of local demand is met locally. Where it does not, almost none is. Bethany Cochrane absorbed 25 of 165 Town residents needing long-term care.</figcaption>
+  </figure>
+
+  <figure>
+    <p class="fig-title">Share of Town residents placed outside Cochrane, by fiscal year</p>
+    <p class="fig-sub">Fiscal years ending 31 March.</p>
+    <div class="legend">
+      <span><i class="swatch sw-local"></i> Placed in Cochrane</span>
+      <span><i class="swatch sw-out"></i> Placed outside Cochrane</span>
+    </div>
+    <div class="rows">
+      <div>
+        <div class="row-lab"><span class="row-name">FY 2022</span><span class="row-total">55 people</span></div>
+        <div class="bar">
+          <div class="seg seg-local" style="width:33.9%" title="19 placed in Cochrane">19</div>
+          <div class="seg seg-out" style="width:65.5%" title="36 placed outside">36 &nbsp;·&nbsp; 65.5%</div>
+        </div>
+      </div>
+      <div>
+        <div class="row-lab"><span class="row-name">FY 2023</span><span class="row-total">56 people</span></div>
+        <div class="bar">
+          <div class="seg seg-local" style="width:34.9%" title="20 placed in Cochrane">20</div>
+          <div class="seg seg-out" style="width:64.3%" title="36 placed outside">36 &nbsp;·&nbsp; 64.3%</div>
+        </div>
+      </div>
+      <div>
+        <div class="row-lab"><span class="row-name">FY 2024</span><span class="row-total">70 people</span></div>
+        <div class="bar">
+          <div class="seg seg-local" style="width:32.9%" title="23 placed in Cochrane">23</div>
+          <div class="seg seg-out" style="width:67.1%" title="47 placed outside">47 &nbsp;·&nbsp; 67.1%</div>
+        </div>
+      </div>
+      <div>
+        <div class="row-lab"><span class="row-name">FY 2025</span><span class="row-total">68 people</span></div>
+        <div class="bar">
+          <div class="seg seg-local" style="width:22.1%" title="15 placed in Cochrane">15</div>
+          <div class="seg seg-out" style="width:77.9%" title="53 placed outside">53 &nbsp;·&nbsp; 77.9%</div>
+        </div>
+      </div>
+      <div>
+        <div class="row-lab"><span class="row-name">FY 2026</span><span class="row-total">68 people</span></div>
+        <div class="bar">
+          <div class="seg seg-local" style="width:29.6%" title="20 placed in Cochrane">20</div>
+          <div class="seg seg-out" style="width:70.6%" title="48 placed outside">48 &nbsp;·&nbsp; 70.6%</div>
+        </div>
+      </div>
+    </div>
+    <figcaption>Between 64% and 78% every year. FY2025 is the weakest year but sits alone; the honest description is a persistent two-thirds to three-quarters, not a deteriorating trend. Annual volume rose from 55 to 68.</figcaption>
+  </figure>
+</section>
+
+<!-- ══ 5 ══════════════════════════════════════════════ -->
+<section>
+  <div class="sec-head"><span class="sec-num">05</span><h2>Who occupies Cochrane's beds</h2></div>
+  <div class="col">
+    <p>The same five years produced 344 admissions into Cochrane's Type A and Type B facilities. Fewer than half went to people who were Cochrane-area residents when they entered care.</p>
+  </div>
+
+  <figure>
+    <p class="fig-title">Admissions into Cochrane facilities, by residence at entry to care</p>
+    <p class="fig-sub">344 admissions, FY2022–26.</p>
+    <div class="legend">
+      <span><i class="swatch sw-local"></i> Cochrane-area resident</span>
+      <span><i class="swatch sw-out"></i> Non-resident</span>
+      <span><i class="swatch sw-neutral"></i> Residence unresolved</span>
+    </div>
+    <div class="rows">
+      <div>
+        <div class="row-lab"><span class="row-name">All Cochrane placements</span><span class="row-total">344 admissions</span></div>
+        <div class="bar">
+          <div class="seg seg-local" style="width:42.4%" title="146 admissions, Cochrane-area residents">146 &nbsp;·&nbsp; 42.4%</div>
+          <div class="seg seg-out" style="width:57.3%" title="197 admissions, non-residents">197 &nbsp;·&nbsp; 57.3% non-resident</div>
+          <div class="seg seg-neutral tiny" style="width:0.3%" title="1 admission, residence unresolved"><span>1</span></div>
+        </div>
+      </div>
+      <div>
+        <div class="row-lab"><span class="row-name">Type A — Bethany Cochrane</span><span class="row-total">133 admissions</span></div>
+        <div class="bar">
+          <div class="seg seg-local" style="width:45.9%" title="61 admissions, Cochrane-area residents">61 &nbsp;·&nbsp; 45.9%</div>
+          <div class="seg seg-out" style="width:54.1%" title="72 admissions, non-residents">72 &nbsp;·&nbsp; 54.1%</div>
+        </div>
+      </div>
+      <div>
+        <div class="row-lab"><span class="row-name">Type B — Hawthorne</span><span class="row-total">211 admissions</span></div>
+        <div class="bar">
+          <div class="seg seg-local" style="width:40.3%" title="85 admissions, Cochrane-area residents">85 &nbsp;·&nbsp; 40.3%</div>
+          <div class="seg seg-out" style="width:59.2%" title="125 admissions, non-residents">125 &nbsp;·&nbsp; 59.2%</div>
+          <div class="seg seg-neutral tiny" style="width:0.5%" title="1 admission, residence unresolved"><span>1</span></div>
+        </div>
+      </div>
+    </div>
+    <figcaption>Cochrane-area combines Town residents (140 admissions) and catchment residents from Springbank and rural Rocky View (6). Counted as people rather than admissions: 133 Town, 6 catchment, 189 non-resident.</figcaption>
+  </figure>
+
+  <div class="pull">Two-thirds of the town's residents are placed elsewhere, while nearly three-fifths of the town's beds are filled by people from elsewhere. Both are true at once, and each strengthens the other.</div>
+</section>
+
+<!-- ══ 6 ══════════════════════════════════════════════ -->
+<section>
+  <div class="sec-head"><span class="sec-num">06</span><h2>The hospital pathway</h2></div>
+  <div class="col">
+    <p>Grouping Town residents by the setting they entered care from reveals the mechanism behind the headline. Access to a local bed depends heavily on whether the placement was urgent.</p>
+  </div>
+
+  <figure>
+    <p class="fig-title">Share of Town residents placed in Cochrane, by setting they entered care from</p>
+    <p class="fig-sub">317 people. Bar length shows the proportion who received a Cochrane placement.</p>
+    <div class="rows">
+      <div>
+        <div class="row-lab"><span class="row-name">Own home / community</span><span class="row-total">93 people · 52 in Cochrane</span></div>
+        <div class="mono-bar"><div class="mono-fill" style="width:55.9%"></div><span class="mono-val">55.9%</span></div>
+      </div>
+      <div>
+        <div class="row-lab"><span class="row-name">Lodge</span><span class="row-total">24 people · 13 in Cochrane</span></div>
+        <div class="mono-bar"><div class="mono-fill" style="width:54.2%"></div><span class="mono-val">54.2%</span></div>
+      </div>
+      <div>
+        <div class="row-lab"><span class="row-name">Other / unclear</span><span class="row-total">22 people · 5 in Cochrane</span></div>
+        <div class="mono-bar"><div class="mono-fill" style="width:22.7%"></div><span class="mono-val">22.7%</span></div>
+      </div>
+      <div>
+        <div class="row-lab"><span class="row-name">Acute hospital</span><span class="row-total">149 people · 25 in Cochrane</span></div>
+        <div class="mono-bar"><div class="mono-fill" style="width:16.8%"></div><span class="mono-val">16.8%</span></div>
+      </div>
+      <div>
+        <div class="row-lab"><span class="row-name">Transition / rehab</span><span class="row-total">12 people · 1 in Cochrane</span></div>
+        <div class="mono-bar"><div class="mono-fill" style="width:8.3%"></div><span class="mono-val">8.3%</span></div>
+      </div>
+      <div>
+        <div class="row-lab"><span class="row-name">Supportive living</span><span class="row-total">17 people · 1 in Cochrane</span></div>
+        <div class="mono-bar"><div class="mono-fill" style="width:5.9%"></div><span class="mono-val">5.9%</span></div>
+      </div>
+    </div>
+    <figcaption>Acute hospital is the single largest entry point into care for Town residents — 149 of 317, or 47% — and the one least likely to end in a local placement.</figcaption>
+  </figure>
+
+  <div class="col">
+    <p>A resident entering care <strong>from the community has roughly a coin-flip chance</strong> of a Cochrane bed. A resident entering <strong>from an acute hospital bed has about one in six</strong>.</p>
+    <p>That reframes the problem. It is not only a question of how many beds exist, but of whether the town has any capacity able to absorb an urgent hospital discharge. When an acute bed must be freed, the person goes wherever a bed is open — and that is overwhelmingly not Cochrane.</p>
+  </div>
+</section>
+
+<!-- ══ 7 ══════════════════════════════════════════════ -->
+<section>
+  <div class="sec-head"><span class="sec-num">07</span><h2>Time to placement</h2></div>
+  <div class="col">
+    <p>Wait times are measured from assessment and approval to admission, for first-ever placements only. Transfers between facilities run on a separate clock and are excluded here; blending the two produces a figure that describes neither.</p>
+  </div>
+
+  <div class="tablewrap">
+    <table>
+      <caption>Days from approval to admission — first placements</caption>
+      <thead>
+        <tr><th>Group</th><th>People</th><th>Median</th><th>90th percentile</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Town resident → placed in Cochrane</td><td>97</td><td class="v-in">32</td><td>335</td></tr>
+        <tr><td>Town resident → placed outside Cochrane</td><td>220</td><td class="v-out">18</td><td>190</td></tr>
+        <tr><td>Non-resident → placed in Cochrane</td><td>140</td><td>30</td><td>327</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="col">
+    <div class="note warn">
+      <span class="note-lab">Read this the right way round</span>
+      <p>Residents placed <em>outside</em> Cochrane waited <strong>less</strong> — 18 days against 32. That is not evidence of better service. It is the signature of accepting the first available bed rather than holding out for a local one, and the 90th percentile shows the cost of holding out: 335 days against 190.</p>
+    </div>
+
+    <h3>Was the placement what the resident asked for?</h3>
+    <p>Not answerable from the placement records alone. The admission file carries a <code>service_provider_rating</code> field that appears to rank the site received, and an earlier draft of this paper reported it as a preference measure. <strong>Testing it against the waitlist system showed it does not mean that.</strong></p>
+    <p>Of 344 admissions into Cochrane facilities, <strong>285 were to a site the person had never listed as a preference</strong> — yet 187 of those carry a rating of 1. One client waited 894 days on the waitlist for Bethany Airdrie, was placed at Bethany Cochrane instead, and the admission record scores that placement as a 1.</p>
+  </div>
+
+  <div class="note warn">
+    <span class="note-lab">Withdrawn from this paper</span>
+    <p>The preference-rank breakdown that appeared here has been removed. The field it rested on does not carry the meaning assumed, and no claim about what residents preferred is made anywhere in this paper.</p>
+    <p>The waitlist system does hold real recorded preferences, and that analysis is underway. It is reported separately once validated — not folded into figures that do not depend on it.</p>
+  </div>
+
+  <div class="col">
+    <p>Everything else in this section stands. Wait times are computed from approval and admission dates, which are unaffected.</p>
+  </section>
+
+<!-- ══ 8 ══════════════════════════════════════════════ -->
+<section>
+  <div class="sec-head"><span class="sec-num">08</span><h2>What this does not measure</h2></div>
+  <div class="col">
+    <p>Three limitations are material to how these figures should be used.</p>
+
+    <h4>People who never received a bed</h4>
+    <p>Everything here is conditioned on placement. Residents still waiting, who withdrew, or who died before a bed became available are not in these counts. Measuring them requires the full waitlist source, which is not yet in hand. <strong>The 317 is therefore local demand that was eventually served — not total local need.</strong></p>
+
+    <h4>Whether displaced residents wanted a Cochrane bed</h4>
+    <p><strong>138 of the 220 residents placed outside Cochrane had formally requested a Cochrane site</strong> and were on that waitlist at or before the moment they were placed elsewhere — median 70 days waiting, longest 1,358. None joined the list afterwards, so this is displacement rather than hindsight. Because the waitlist record begins 1 April 2021, 138 is a floor.</p>
+    <p>What cannot be said is how many of the remaining 82 also wanted a local bed. Their preferences are not recorded in the source available.</p>
+
+    <h4>Where they were placed instead</h4>
+    <p>The analysis records whether a placement was in Cochrane, not which community it was in. Naming destinations requires the facility reference table from the health authority.</p>
+
+    <div class="note">
+      <span class="note-lab">Direction of error</span>
+      <p>Cohort C — residents placed elsewhere — is identified only through a registry address. Gaps in registry coverage can therefore only <strong>understate</strong> displacement, never inflate it. The 69.4% is a floor.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ══ 9 ══════════════════════════════════════════════ -->
+<section>
+  <div class="sec-head"><span class="sec-num">09</span><h2>Validation</h2></div>
+  <div class="col">
+    <p>Every figure in this paper is reproducible from a single query and a client-level extract, both of which have been checked independently.</p>
+  </div>
+
+  <div class="tablewrap">
+    <table>
+      <caption>Integrity checks</caption>
+      <thead>
+        <tr><th>Check</th><th>Required</th><th>Result</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Every demand record is that person's first-ever residential admission</td><td>100%</td><td class="v-in">100%</td></tr>
+        <tr><td>Demand population is one row per person</td><td>equal</td><td class="v-in">546 / 546</td></tr>
+        <tr><td>Registry linkage rate</td><td>high</td><td class="v-in">100%</td></tr>
+        <tr><td>Duplicate person identifiers</td><td>none</td><td class="v-in">0</td></tr>
+        <tr><td>Admissions with no computable wait clock</td><td>none</td><td class="v-in">0</td></tr>
+        <tr><td>Residence verdicts on 10+ years of registry history</td><td>majority</td><td>86.4%</td></tr>
+        <tr><td>Residence verdicts on under 5 years of history</td><td>minority</td><td>5.0%</td></tr>
+        <tr class="total"><td>Total in scope</td><td>—</td><td>636 people · 776 admissions</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="col">
+    <p>A further 50 people were excluded from the demand figures because they had already entered residential care before the window opened; their in-window admission is a later placement, not a first one. They remain in the capacity figures, because they still occupy a bed.</p>
+  </div>
+</section>
+
+<!-- ══ 10 ═════════════════════════════════════════════ -->
+<section>
+  <div class="sec-head"><span class="sec-num">10</span><h2>What would strengthen this</h2></div>
+  <div class="col">
+    <p>Two additions would materially improve the case, in this order.</p>
+
+    <h4>A population denominator</h4>
+    <p>The registry can supply the number of Cochrane residents aged 75 and over in each year. That converts 63 placements a year into a <strong>rate</strong> — admissions per 1,000 seniors — which can be benchmarked against comparable Alberta communities and projected forward against Cochrane's growth. For a capital decision this is the single most useful number not yet in hand, and it requires no external request.</p>
+
+    <h4>The waitlist source</h4>
+    <p>Waitlist entry, exit and closure reason would add the fourth cohort — residents who never received a placement. The preference records behind the 138 displaced residents in Section 08 begin only on 1 April 2021; the full history would turn that floor into a count.</p>
+  </div>
+</section>
+
+<footer>
+  Analysis period FY2022–FY2026 · Type A and Type B continuing care · Town of Cochrane census subdivision<br>
+  Sources: continuing care placement records; Alberta provincial registry; Alberta postal code reference<br>
+  Person-level detail available on request. All figures reproducible from the documented extraction query.
+</footer>
+
+</div>
