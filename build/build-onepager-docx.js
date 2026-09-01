@@ -155,10 +155,10 @@ dataTable(['Residence at entry to care','Admissions','People','Share'],[
   ['Town of Cochrane','140','133',{t:'40.7%',c:LOCAL,b:true}],
   ['Cochrane catchment (Springbank, rural Rocky View)','6','6',{t:'1.7%',c:LOCAL,b:true}],
   ['Not a Cochrane-area resident','197','189',{t:'57.3%',c:OUT,b:true}],
-  ['Residence unresolved','1','1','0.3%'],
   ['All admissions into Cochrane facilities','344','—','100%']
 ],[5080,1700,1600,1700],{totalRow:true}),
-SPACER(80),
+capText('Shares are of all 344 admissions. One further admission has unresolved residence '+
+  'and is not attributed to a group.'),
 note('Both true at once',[
   nP([{t:'Two-thirds of the town’s residents are placed elsewhere, while nearly three-fifths of the town’s beds '+
       'are filled by people from elsewhere. Each finding strengthens the other, and they come from independent measures.'}])
