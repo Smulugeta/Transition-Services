@@ -21,6 +21,11 @@ They look alike and they are not the same question.
 Both are true at once, and each strengthens the other. They come from
 independent measures, which is why they can corroborate each other.
 
+A third question — **how much local demand never received a bed at all** — is
+cohort D, and it is not in the published figures. The 317 is demand that was
+eventually served, not total local need. See *Cohort D* below for where that
+work stands.
+
 Person counts must never be summed across years — the same individual recurs.
 Capacity is counted per admission because each admission occupies a bed.
 
@@ -207,6 +212,31 @@ Also worth carrying: of those who left without a placement, 83% had an
 `assess_approved_date` and were genuinely ready for a bed. The other 17% were
 still in process and were never waiting; they do not belong in cohort D.
 
+### Cohort D needs its own residency anchor
+
+The province-wide spell run carries 52,877 people and residency for **1.2%** of
+them. That is not a gap in the extract — it is structural. A/B/C determine
+residence by anchoring on a person's **first-ever Type A/B admission**; cohort D
+is defined by never having been admitted. The anchor does not exist for them.
+
+`sql/07_cohort_d_residency.sql` anchors on **list entry** instead — the first
+day the person appears on the waitlist, which is the same logical event one step
+earlier in the pathway. The three fiscal years before someone joins a waitlist
+cannot contain the facility they would later have been placed in, so the
+contamination protection is unchanged.
+
+**Different anchors mean A + C + D is not a legal sum until it is shown to be.**
+Block V of query 07 is that test: for the ~159 people who have both a placement
+and a waitlist record, it computes residency both ways and reports agreement.
+Run block V and read it before using anything else in that query. High agreement
+means the cohorts combine; low agreement means D is reported on its own, with
+the reason stated.
+
+**Cohort D is filtered on residency, not on who rated Cochrane.** Only 159 of
+the 317 placed Town residents ever rated a Cochrane site — about half. Building
+D from "people who asked for Cochrane" would miss roughly half of it and would
+select on willingness to ask rather than on where people live.
+
 ### Still open
 
 `PERS_REAP_END_DATE` on the registry is a registration/eligibility end, not a
@@ -230,6 +260,7 @@ sql/
   02_client_level_detail.sql      one row per episode, for validation
   03_waitlist_rated_sites.sql     the waitlist census, for recorded preference
   05_waitlist_spells.sql          cohort D — spells, exits, deaths
+  07_cohort_d_residency.sql       cohort D — residency from a list-entry anchor
 analysis/
   04_displacement_check.py        joins 02 and 03 — the 138-of-220 finding
   06_exit_classification.py       validates and classifies 05's output
