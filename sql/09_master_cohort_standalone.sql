@@ -325,18 +325,22 @@ demand as (
     -- (the stricter test against the demand event itself is in demand_in_window)
 ),
 demand_in_window as (
-    select d.*,
-           iff(month(d.demand_dt) >= 4, year(d.demand_dt) + 1, year(d.demand_dt))         as demand_fye,
-           iff(month(d.demand_dt_alt) >= 4, year(d.demand_dt_alt) + 1, year(d.demand_dt_alt)) as demand_fye_alt,
-           -- G1: membership under each anchor. The universe admits EITHER.
-           iff(d.demand_dt >= w.win_start and d.demand_dt < w.win_end
-               and (d.first_residential_ever is null or d.first_residential_ever >= d.demand_dt), 1, 0) as in_window,
-           iff(d.demand_dt_alt >= w.win_start and d.demand_dt_alt < w.win_end
-               and (d.first_residential_ever is null or d.first_residential_ever >= d.demand_dt_alt), 1, 0) as in_window_alt
-    from demand d cross join w
-    -- ALREADY IN RESIDENTIAL CARE WHEN THE DEMAND EVENT HAPPENED is inside
-    -- each in_window flag (rev 2.3 rule, tested against the demand event).
-    qualify in_window = 1 or in_window_alt = 1
+    -- QUALIFY needs a window function in Snowflake; these flags are plain
+    -- expressions, so they are projected in a subquery and filtered with WHERE.
+    select * from (
+        select d.*,
+               iff(month(d.demand_dt) >= 4, year(d.demand_dt) + 1, year(d.demand_dt))         as demand_fye,
+               iff(month(d.demand_dt_alt) >= 4, year(d.demand_dt_alt) + 1, year(d.demand_dt_alt)) as demand_fye_alt,
+               -- G1: membership under each anchor. The universe admits EITHER.
+               iff(d.demand_dt >= w.win_start and d.demand_dt < w.win_end
+                   and (d.first_residential_ever is null or d.first_residential_ever >= d.demand_dt), 1, 0) as in_window,
+               iff(d.demand_dt_alt >= w.win_start and d.demand_dt_alt < w.win_end
+                   and (d.first_residential_ever is null or d.first_residential_ever >= d.demand_dt_alt), 1, 0) as in_window_alt
+        from demand d cross join w
+        -- ALREADY IN RESIDENTIAL CARE WHEN THE DEMAND EVENT HAPPENED is inside
+        -- each in_window flag (rev 2.3 rule, tested against the demand event).
+    )
+    where in_window = 1 or in_window_alt = 1
 ),
 
 -- ── STEP 5 — RESIDENCY, TWO METHODS, MISSINGNESS SPLIT ─────────────────────
