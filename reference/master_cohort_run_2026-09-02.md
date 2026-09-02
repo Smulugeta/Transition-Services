@@ -1,11 +1,14 @@
-# Master cohort — runs of 2026-09-02, read on the rev 2.3 rules
+# Master cohort — runs of 2026-09-02
 
-Output of `sql/09_master_cohort_standalone.sql` rev 2.2 (653 rows), validated by
-`analysis/07_master_cohort_check.py` rev 3. **All twelve integrity checks pass.**
-That is a data-integrity result, not a methodological sign-off.
+Output of `sql/09_master_cohort_standalone.sql` **rev 2.3** (full audit
+universe, 33,003 people), validated by `analysis/07_master_cohort_check.py`
+rev 3. **All twelve integrity checks pass.** That is a data-integrity result,
+not a methodological sign-off.
 
-The checker recomputes every cohort from residency × placement × location and
-compares it with the SQL's own column; the two agree for all 653 people.
+Three runs — rev 2.1 (1,139 rows), rev 2.2 (653), rev 2.3 (33,003) — give the
+same primary A/B/C/D. The checker recomputes every cohort from residency ×
+placement × location and compares it with the SQL's own column; the two agree
+for all 33,003 people.
 
 ## Reviewer decisions adopted (third review)
 
@@ -70,30 +73,35 @@ into Town. The D share is 19.7% against 19.9%; the story does not change.
 | B | 137 | 31 | 361 |
 | C | 191 | 21 | 304 |
 
-## Residency uncertainty around D — no request-based gate
+## Residency uncertainty around D — full universe, no request-based gate
 
 Why a request gate is wrong, from this data: only **190 of 346 (54.9%)** of
 known Town demand ever recorded a Cochrane request; among those actually
 placed, **141 of 278 (50.7%)**. Absence of a request says nothing about
-residency and must not narrow the pool.
+residency and must not narrow the pool. Rev 2.2's gate is withdrawn; rev 2.3
+returns everyone.
 
-Unresolved on the primary rule, approved, unplaced: **9** (5 no registry
-record, 4 registry record with no year in the lookback).
+Unresolved on the primary rule, approved, unplaced, **province-wide: 114**
+(58 no registry record; 56 registry record with no year in the lookback).
 
-| Tier | D |
-|---|---|
-| Primary | **68** |
-| + every unresolved counted as Town — mathematical maximum on this extract | 77 |
+`residency_fallback` — the latest mapped address before the demand event at
+any distance — resolves **22** of them: **0 Town, 0 catchment, 22 not
+Cochrane**, with addresses 4 to 28 years stale. The remaining **92** cannot be
+resolved from the registry: 58 have no registry record at all, and 34 have
+registry rows only *after* their demand event (recent arrivals to Alberta, or
+a PHN issue). 7 of the 92 carry a recorded Cochrane request.
 
-Rev 2.3 adds `residency_fallback` — the latest mapped address before the demand
-event at any distance — which will resolve the "no year in lookback" class and
-leave only "no registry record" as truly unresolved. The three-tier figure
-(primary / + fallback-Town / + truly unresolved) is reported once rev 2.3 is run.
+| Tier | D | What it is |
+|---|---|---|
+| Primary | **68** | latest pre-demand address = Town |
+| + fallback-Town | **68** | fallback found zero stale Cochrane addresses |
+| + every truly unresolved person counted as Town | **160** | mathematical maximum — every unresolved person in Calgary and Edmonton assumed to be from Cochrane |
 
-On the rev 2.1 extract, which kept every unresolved person in the province,
-the same maximum was 74 + 114 = 188. That figure is mathematically valid and
-analytically useless; the answer is better resolution (rev 2.3), not a narrower
-pool (rev 2.2, withdrawn).
+For scale only, and labelled as an assumption rather than a count: among
+*resolved* approved-unplaced people province-wide, 68 of 5,225 (1.30%) are
+Town residents. Distributing the 92 the same way adds about 1 person. The
+maximum of 160 is arithmetically correct and, on the evidence of the fallback
+(0 of 22 resolvable were anywhere near Cochrane), very loose.
 
 **Correction:** an earlier message gave the unresolved-with-request count as 8
 and the bound as 82. The query's own flag gives 9 and 83. The rule itself is
@@ -109,8 +117,8 @@ nothing is summarised by hand.
 |---|---|---|---|---|---|---|---|
 | A | 87 | 5 | 0 | 0 | 3 | 2 | 97 |
 | B | 0 | 132 | 0 | 0 | 7 | 5 | 144 |
-| C | 0 | 0 | 191 | 0 | 17 | 12 | 220 |
-| **TOTAL** | 87 | 137 | 191 | 0 | 27 | 19 | **461** |
+| C | 0 | 0 | 191 | 0 | 18 | 11 | 220 |
+| **TOTAL** | 87 | 137 | 191 | 0 | 28 | 18 | **461** |
 
 **Kept cohort 410 of 461; changed or absent 51.** On the sensitivity rule the
 same matrix keeps 428 of 461 with 33 changed — the reviewer's arithmetic; an
@@ -120,8 +128,8 @@ Every off-diagonal cell, with its reason from the extract:
 
 | From → to | n | Reason |
 |---|---|---|
-| C → none | 14 | latest address not Cochrane (any-3-year said Town) — the residency-rule change |
-| C → absent | 12 | not in master: approval before the window, or already in residential care at the demand event |
+| C → none | 15 | latest address not Cochrane (any-3-year said Town) — the residency-rule change |
+| C → absent | 11 | not in master: approval before the window, or already in residential care at the demand event |
 | B → none | 6 | unresolved at the earlier anchor (registry record, no year in lookback) |
 | B → absent | 5 | not in master, as above |
 | A → B | 3 | latest address not Cochrane (any-3-year said Town) |
@@ -133,10 +141,14 @@ Every off-diagonal cell, with its reason from the extract:
 | B → none | 1 | unresolved (no registry record) |
 | A → none | 1 | now Cochrane catchment |
 
-The 19 absent all have zero days in care before placement and 15 were admitted
-in the first year of the window: pre-window approvals, excluded by design.
-Confirm by pulling `first_approval_dt` and `first_residential_ever` for those
-19 PHNs.
+**Correction from the rev 2.3 run.** The rev 2.2 extract showed 19 absent and
+I attributed all 19 to pre-window approvals. One of them was a filter
+artefact: a published C person who is not a Cochrane resident under any rule
+and was dropped by rev 2.2's output filter. On the full universe the absent
+count is **18**, all with zero days in care before placement and most admitted
+in the first year of the window. Confirm by pulling `first_approval_dt` and
+`first_residential_ever` for those 18 PHNs. This is exactly why the audit
+universe must not be filtered.
 
 ## Status
 
@@ -147,5 +159,6 @@ Confirm by pulling `first_approval_dt` and `first_residential_ever` for those
 - Nothing here goes into the report until the reviewer clears it, and every D
   figure carries "no Type A/B placement observed in the Calgary/Edmonton
   Strata placement source by 31 March 2026".
-- Rev 2.3 still to run: adds the fallback residency tier and the
-  already-in-care-at-demand test (zero rows affected on this data).
+- Rev 2.3 has been run. The already-in-care-at-demand test affects zero
+  rows; the fallback tier adds zero Town residents. 35 people are
+  left-truncated in the full universe, none of them in any cohort.

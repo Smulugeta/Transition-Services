@@ -17,9 +17,11 @@ scripts. Every published figure traces to a numbered block in
 > B 137 · C 191 · D 68 (12 still waiting / 25 died / 31 exited)**, resident
 > demand 346 (sensitivity 372). Full transition matrix against the published
 > A/B/C and every off-diagonal reason are in
-> `reference/master_cohort_run_2026-09-02.md`. `sql/09` rev 2.3 (fallback
-> residency, already-in-care tested at the demand event, no output filter) is
-> written and not yet run.
+> `reference/master_cohort_run_2026-09-02.md`. `sql/09` rev 2.3 has been run on
+> the full 33,003-person audit universe: same primary figures, all twelve
+> checks pass, and the residency-uncertainty tiers on D are **68 primary /
+> 68 with fallback / 160 mathematical maximum** — the fallback found zero
+> stale Cochrane addresses among the 22 unresolved people it could place.
 > The word "province-wide" is **withdrawn permanently for this source**:
 > `sql/10_coverage_checks.sql` has been run and the admissions source is the
 > Calgary and Edmonton Strata instances only. Every D figure carries that
@@ -426,8 +428,8 @@ Not blocking anything published, but each would strengthen the case:
    admissions per 1,000 seniors — benchmarkable against comparable Alberta
    communities and projectable against the town's growth. Single most useful
    number not yet in hand, and it needs no external request.
-2. **Run `sql/09` rev 2.3** and the checker; report the three-tier D. Then
-   the reviewer's fourth pass. Still for ALA: a Central-zone source; the Retired-DAL/DEL codes; which approval
+2. **Reviewer's fourth pass** on `reference/master_cohort_run_2026-09-02.md`.
+   All five asks from the third review are done and run. Still for ALA: a Central-zone source; the Retired-DAL/DEL codes; which approval
    field is operational. Waitlist history before 2021-04-01 would additionally
    resolve the 1,604 left-truncated people and turn the 138 displacement floor
    into a count.
