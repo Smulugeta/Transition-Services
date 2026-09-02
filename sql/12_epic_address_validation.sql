@@ -66,13 +66,15 @@ where regexp_replace(identity_id::string,'[^0-9]','') = '498338261'
    or identity_id::string like '%49833%8261%';
 
 -- ── 1. IS IDENTITY_TYPE_ID 221 THE PHN? PHN QUALITY AND UNIQUENESS ─────────
--- Block 0b shows the values. Type 221 is the PHN if its values are 9-digit
--- and one per patient; the dimension table naming it varies by Clarity
--- build (IDENTITY_ID_TYPE.ID_TYPE / ID_TYPE_NAME in most), so look it up
--- with information_schema rather than a guessed name:
-select table_name, column_name
-from db_source_epic_clarity.information_schema.columns
-where table_schema = 'RAW' and table_name ilike '%IDENTITY%TYPE%';
+-- identity_id is the only identity table in this build; there is no
+-- type-name column on it. So 221 is confirmed EMPIRICALLY: its values must
+-- be nine digits, one per patient, and must match the waitlist PHNs (block
+-- 0c). A sample of raw values under 221, as stored:
+select identity_id, pat_id, length(identity_id::string) as raw_len,
+       length(regexp_replace(identity_id::string,'[^0-9]','')) as digits
+from db_source_epic_clarity.raw.identity_id
+where identity_type_id = '221'
+limit 20;
 
 -- digit-length quality of identity_id under type 221 (count BEFORE any padding)
 select case when d = 0 then '0 digits' when d between 1 and 8 then '1-8 digits'
