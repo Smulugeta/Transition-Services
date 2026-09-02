@@ -278,7 +278,14 @@ Expect the remaining count to fall to about 9.
   E, G and `sql/12` blocks 1, 2, 7 and the control are to be reported back.
 - **Epic is not in the hierarchy.** The sample's `EFF_START_DATE` values are
   all 2026-09-01, which looks like a load date; if `sql/12` block 2 confirms
-  it, Epic cannot place anyone at a 2021–2025 demand date and stays out. The checker rev 4 already
+  it, Epic cannot place anyone at a 2021–2025 demand date and stays out.
+- **Epic check 1, run 2026-09-02:** under `identity_type_id = 221`,
+  **9,384,709 rows = 9,384,709 distinct patients, all exactly 9 digits, zero
+  all-zero placeholders.** One identity per patient, no padding or
+  truncation risk, and a population-scale count consistent with the
+  provincial PHN/ULI. Still to confirm: no PHN held by more than one patient
+  (the uniqueness-both-ways statement), cohort coverage (0c), and the
+  start-date question (block 2). The checker rev 4 already
   applies the rev 2.4 rules to the rev 2.3 extract, which is where the figures
   above come from. 35 people are left-truncated in the full universe, none in
   any cohort.
