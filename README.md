@@ -7,21 +7,21 @@ Everything here is reproducible from the SQL extracts and the two analysis
 scripts. Every published figure traces to a numbered block in
 `sql/01_demand_capacity_report.sql`.
 
-> **Status (2026-09-02, after third review).** A, B and C are **provisional**.
-> **Cohort D is measurable, reconciled and not signed off. Do not use
-> A + C + D. Do not call D validated.** The reviewer's decisions are adopted:
-> the cohort is *new Type A/B demand arising FY2022–FY2026*; residency primary
-> is the latest pre-demand address, with the published any-three-year rule as
-> sensitivity; D3 is quotable descriptively only, and the source-coverage
-> caveat applies to all of D. Primary figures on the current run: **A 87 ·
-> B 137 · C 191 · D 68 (12 still waiting / 25 died / 31 exited)**, resident
-> demand 346 (sensitivity 372). Full transition matrix against the published
-> A/B/C and every off-diagonal reason are in
-> `reference/master_cohort_run_2026-09-02.md`. `sql/09` rev 2.3 has been run on
-> the full 33,003-person audit universe: same primary figures, all twelve
-> checks pass, and the residency-uncertainty tiers on D are **68 primary /
-> 68 with fallback / 160 mathematical maximum** — the fallback found zero
-> stale Cochrane addresses among the 22 unresolved people it could place.
+> **Status (2026-09-02, after fourth review).** Under the reviewer's
+> definitions — *new Type A/B demand arising FY2022–FY2026*, residency = latest
+> pre-demand address — **A 87, C 191 and resident demand 346 are accepted; D 68
+> (12 still waiting / 25 died / 31 exited) is mechanically validated and must
+> be worded as "no Type A/B placement observed in the Calgary/Edmonton Strata
+> source by 31 March 2026"; B is 143** on the reviewer's recommendation that B
+> means any non-Town resident placed in Cochrane (6 of them catchment; 9
+> further Cochrane placements have unresolved residency and are their own
+> category). **Not yet final sign-off.** Residency uncertainty around D is
+> primary 68, mathematical maximum 181; the fallback address is historical
+> evidence only and reduces nothing. All fourteen integrity checks pass on the
+> full 33,003-person universe. Details, the transition matrix against the
+> published A/B/C, and every correction are in
+> `reference/master_cohort_run_2026-09-02.md`. `sql/09` rev 2.4 is written and
+> not yet run; checker rev 4 already applies its rules.
 > The word "province-wide" is **withdrawn permanently for this source**:
 > `sql/10_coverage_checks.sql` has been run and the admissions source is the
 > Calgary and Edmonton Strata instances only. Every D figure carries that
@@ -428,8 +428,9 @@ Not blocking anything published, but each would strengthen the case:
    admissions per 1,000 seniors — benchmarkable against comparable Alberta
    communities and projectable against the town's growth. Single most useful
    number not yet in hand, and it needs no external request.
-2. **Reviewer's fourth pass** on `reference/master_cohort_run_2026-09-02.md`.
-   All five asks from the third review are done and run. Still for ALA: a Central-zone source; the Retired-DAL/DEL codes; which approval
+2. **Consultant confirms the meaning of B** (non-Town → 143; outside the
+   catchment → 137 with the 6 catchment people shown separately). Then run
+   `sql/09` rev 2.4 and the reviewer's fifth pass. Still for ALA: a Central-zone source; the Retired-DAL/DEL codes; which approval
    field is operational. Waitlist history before 2021-04-01 would additionally
    resolve the 1,604 left-truncated people and turn the 138 displacement floor
    into a count.

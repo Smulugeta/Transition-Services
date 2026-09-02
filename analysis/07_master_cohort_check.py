@@ -2,6 +2,17 @@
 """
 Validate and tabulate the master demand cohort (output of sql/09, rev 2.3).
 
+Revision 4 after fourth review:
+  - Hard checks: placeholder / malformed PHN inside A-D = 0; death before
+    demand inside A-D = 0. Both are also counted across the universe.
+  - Cohort B = any NON-TOWN resident placed in Cochrane. Catchment residents
+    are B (sub-counted); unresolved-residency Cochrane placements are their
+    own category.
+  - The residency fallback is reported as HISTORICAL EVIDENCE ONLY. The
+    maximum on D is primary D plus every valid unresolved approved-unplaced
+    person; fallback does not reduce it.
+  - registry_history_depth replaces confidence; residency_evidence reported.
+
 Revision 3 after third review:
   - PRIMARY residency = latest mapped address in the lookback (RESIDENCY_LATEST).
     The published any-address-in-three-years rule is the SENSITIVITY.
@@ -36,11 +47,13 @@ def phn(s):
 def pct(a, b): return f"{a/b*100:5.1f}%" if b else "   —  "
 def col(r, k, default=""): return (r.get(k) or default).strip()
 
-def cohort_of(r, res):
-    """The one rule, applied to whichever residency verdict is passed in."""
-    if not r["_app"]: return None
+def cohort_of(r, res, b_rule="nontown"):
+    """The one rule, applied to whichever residency verdict is passed in.
+    b_rule 'nontown' (rev 2.4+): B = Not-Cochrane-area OR catchment, placed in Cochrane.
+    b_rule 'nonarea'  (rev <=2.3): B = Not-Cochrane-area only."""
+    if not r["_app"] or not r["_valid"]: return None
     if res == TOWN and r["_inc"]:           return "A"
-    if res == NOT  and r["_inc"]:           return "B"
+    if r["_inc"] and (res == NOT or (b_rule == "nontown" and res == AREA)): return "B"
     if res == TOWN and r["_pl"]:            return "C"
     if res == TOWN:                         return "D"
     return None
@@ -59,21 +72,33 @@ def load(path):
         r["_resF"] = col(r,"RESIDENCY_FALLBACK") or None
         r["_dcls"] = col(r,"D_CLASS")
         r["_sqlcoh"] = col(r,"COHORT") or None
-        r["_coh"]  = cohort_of(r, r["_resL"])          # PRIMARY, recomputed
-        r["_cohA"] = cohort_of(r, r["_resA"])          # SENSITIVITY, recomputed
+        r["_badphn"] = (not r["_phn"]) or set(r["_phn"]) == {"0"} or len(col(r,"PHN")) != 9 or not col(r,"PHN").isdigit()
+        r["_dbd"]  = bool(r["_dth"] and r["_dem"] and r["_dth"] < r["_dem"])
+        r["_valid"] = col(r,"RECORD_VALID","1") == "1" and not r["_dbd"] and not r["_badphn"]
         r["_req"]  = col(r,"RATED_COCHRANE","0") == "1"
+        r["_depth"] = col(r,"REGISTRY_HISTORY_DEPTH") or col(r,"CONFIDENCE")
+        r["_evid"]  = col(r,"RESIDENCY_EVIDENCE")
+    for r in rows:
+        r["_coh"]  = cohort_of(r, r["_resL"])          # PRIMARY, recomputed, B = non-Town
+        r["_cohA"] = cohort_of(r, r["_resA"])          # SENSITIVITY, recomputed
     return rows
 
 # ── 1. integrity — gate ──────────────────────────────────────────────────────
 def integrity(rows):
     print("1. INTEGRITY — the script stops if any of these fail")
     n = len(rows)
-    has_any3 = "COHORT_ANY3" in rows[0]
-    # which rule did the SQL use for COHORT?  rev>=2.3: latest; earlier: any3
-    sql_rule = "latest" if has_any3 else "any3"
-    mismatch = sum(1 for r in rows if (r["_sqlcoh"] or None) != ((r["_coh"] if sql_rule=="latest" else r["_cohA"]) or None))
+    has_any3 = "COHORT_ANY3" in rows[0]; has_b24 = "B_CATCHMENT" in rows[0]
+    # which rule did the SQL use for COHORT?  rev>=2.4: latest + non-Town B;
+    # rev 2.3: latest + non-area B; earlier: any3 + non-area B
+    if has_b24:   expect = lambda r: r["_coh"]
+    elif has_any3: expect = lambda r: cohort_of(r, r["_resL"], "nonarea")
+    else:          expect = lambda r: cohort_of(r, r["_resA"], "nonarea")
+    sql_rule = "rev2.4 rule" if has_b24 else "rev2.3 rule" if has_any3 else "rev<=2.2 rule"
+    mismatch = sum(1 for r in rows if (r["_sqlcoh"] or None) != (expect(r) or None))
     checks = [
         ("duplicate PHNs (one row per person)", n - len({r["_phn"] for r in rows})),
+        ("placeholder or malformed PHN inside A-D", sum(1 for r in rows if r["_badphn"] and r["_coh"])),
+        ("death date before demand event inside A-D", sum(1 for r in rows if r["_dbd"] and r["_coh"])),
         ("placement before demand event",      sum(1 for r in rows if r["_pl"] and r["_pl"] < r["_dem"])),
         ("placement after follow-up end counted as placed", sum(1 for r in rows if r["_pl"] and r["_pl"] > FOLLOW_UP)),
         ("first residential admission BEFORE the demand event (already in care)",
@@ -91,9 +116,11 @@ def integrity(rows):
     bad = 0
     for label, c in checks:
         bad += c > 0; print(f"  {label:70s} {c:7,}  {'ok' if c == 0 else 'FAIL'}")
-    if not has_any3:
-        print("  note: extract predates rev 2.3 (no COHORT_ANY3 / RESIDENCY_FALLBACK); primary cohorts below are")
-        print("        recomputed from RESIDENCY_LATEST, and the fallback tier cannot be reported.")
+    bp = sum(1 for r in rows if r["_badphn"]); bd = sum(1 for r in rows if r["_dbd"])
+    print(f"  across the whole universe: placeholder/malformed PHN {bp:,}; death before demand {bd:,}  (rev 2.4 rejects/flags these)")
+    if not has_b24:
+        print("  note: extract predates rev 2.4; primary cohorts below are recomputed with B = non-Town.")
+        if not has_any3: print("        (also predates rev 2.3: no fallback residency column)")
     print(); return bad == 0
 
 # ── 2. cohorts ──────────────────────────────────────────────────────────────
@@ -106,7 +133,12 @@ def cohorts(rows):
     for k, lab in (("A","resident, placed in Cochrane"),("C","resident, placed outside"),("D","resident, no placement in source")):
         print(f"   {k}  {lab:36s} {cP[k]:9,} {pct(cP[k],rP):>8}   {cS[k]:11,} {pct(cS[k],rS):>8}")
     print(f"      {'resident demand A + C + D':36s} {rP:9,} {'':>8}   {rS:11,}")
-    print(f"   B  {'non-resident, placed in Cochrane':36s} {cP['B']:9,} {'':>8}   {cS['B']:11,}")
+    print(f"   B  {'NON-TOWN resident, placed in Cochrane':36s} {cP['B']:9,} {'':>8}   {cS['B']:11,}")
+    bc = sum(1 for r in rows if r["_coh"]=="B" and r["_resL"]==AREA)
+    bu = sum(1 for r in rows if r["_inc"] and r["_app"] and r["_valid"] and r["_resL"]==UNRES)
+    print(f"        of which Cochrane catchment          {bc:9,}")
+    print(f"      Cochrane placement, residency UNRESOLVED {bu:9,}   (own category; never A or B)")
+    print(f"      A + B = every Cochrane placement with known residency: {cP['A']+cP['B']:,}")
     dc = Counter(r["_dcls"] for r in rows if r["_coh"]=="D")
     print("\n   D by class (primary) — different findings, never one word:")
     for k in sorted(dc): print(f"     {k:48s} {dc[k]:6,}   {pct(dc[k],cP['D'])} of D")
@@ -126,21 +158,32 @@ def uncertainty(rows, cP):
     print(f"   known Town demand with a recorded Cochrane request: {req:,} of {len(town):,} ({pct(req,len(town)).strip()});")
     print(f"   among those placed (A+C): {reqpl:,} of {len(pl):,} ({pct(reqpl,len(pl)).strip()}).")
     print( "   -> absence of a request says nothing about residency; it must not narrow the pool.")
-    un = [r for r in rows if r["_resL"]==UNRES and r["_app"] and not r["_pl"]]
-    print(f"\n   unresolved on the primary rule, approved, unplaced: {len(un):,}")
+    un_all = [r for r in rows if r["_resL"]==UNRES and r["_app"] and not r["_pl"]]
+    un = [r for r in un_all if r["_valid"]]
+    print(f"\n   unresolved on the primary rule, approved, unplaced: {len(un_all):,}  (valid records {len(un):,})")
+    print(f"\n   D:  primary {cP['D']:,}    mathematical maximum {cP['D']+len(un):,}  = primary + every valid unresolved person counted as Town")
+    print( "   Neither the fallback nor a proportional allocation reduces that maximum. It is not an estimate.")
     if any(r["_resF"] for r in rows):
         f = Counter(r["_resF"] for r in un)
-        print(f"     fallback (latest address before demand, any distance) resolves them as:")
+        yrs = sorted(int(col(r,"FALLBACK_YEARS_BEFORE_DEMAND")) for r in un if r["_resF"]!=UNRES and col(r,"FALLBACK_YEARS_BEFORE_DEMAND"))
+        print(f"\n   fallback residency — HISTORICAL EVIDENCE ONLY (addresses {min(yrs) if yrs else '-'}-{max(yrs) if yrs else '-'} years old, median {st.median(yrs) if yrs else '-'}):")
         for k, v in f.most_common(): print(f"       {k:36s} {v:6,}")
-        yrs = sorted(int(col(r,"FALLBACK_YEARS_BEFORE_DEMAND")) for r in un if r["_resF"]==TOWN and col(r,"FALLBACK_YEARS_BEFORE_DEMAND"))
-        if yrs: print(f"       Town by fallback, years before demand: median {int(st.median(yrs))}, max {max(yrs)}")
-        addT = f.get(TOWN,0); still = f.get(UNRES,0)
-        print(f"\n   D tiers:  primary {cP['D']:,}   + fallback-Town {addT:,} = {cP['D']+addT:,}   + truly unresolved {still:,} = {cP['D']+addT+still:,} (mathematical maximum)")
-    else:
-        print(f"   fallback residency not in this extract (pre rev 2.3).")
-        print(f"   D tiers:  primary {cP['D']:,}   + all unresolved {len(un):,} = {cP['D']+len(un):,} (mathematical maximum, wide)")
+        print( "   A decade-old non-Cochrane address is evidence, not resolution. Reported, not subtracted.")
     byr = Counter(col(r,"RESIDENCY_MISSING_REASON") for r in un)
     print("   unresolved by reason: " + "; ".join(f"{k} {v}" for k, v in byr.most_common()) + "\n")
+
+# ── 3b. residency evidence ──────────────────────────────────────────────────
+def evidence(rows):
+    print("3b. RESIDENCY EVIDENCE for the verdicts actually used (A/C/D people)")
+    g = [r for r in rows if r["_coh"] in ("A","C","D")]
+    if any(r["_evid"] for r in g):
+        for k, v in Counter(r["_evid"] for r in g).most_common(): print(f"   {k:64s} {v:6,}  {pct(v,len(g))}")
+        stab = sum(1 for r in g if col(r,"RESIDENCY_STABLE_IN_LOOKBACK","0")=="1")
+        print(f"   stable across the lookback (all mapped years agree on Town / not Town): {stab:,} of {len(g):,}")
+    else:
+        print("   RESIDENCY_EVIDENCE not in this extract (pre rev 2.4).")
+    dep = Counter(r["_depth"] for r in rows if r["_resL"]==UNRES)
+    print(f"   registry history depth among UNRESOLVED (depth is not confidence): {dict(dep)}\n")
 
 # ── 4. method matrix ────────────────────────────────────────────────────────
 def methods(rows):
@@ -213,7 +256,7 @@ def main(a):
     rows = load(a.master_csv)
     print(f"\n{a.master_csv}\n{len(rows):,} people in the audit universe\n")
     if not integrity(rows): sys.exit("INTEGRITY CHECKS FAILED — nothing else is printed. Fix the query first.")
-    cP = cohorts(rows); uncertainty(rows, cP); methods(rows); year_waits(rows)
+    cP = cohorts(rows); uncertainty(rows, cP); evidence(rows); methods(rows); year_waits(rows)
     if a.published: reconcile(rows, a.published, cP)
     print("A clean run is a data-integrity result, not a methodological sign-off.")
 

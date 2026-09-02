@@ -2,8 +2,8 @@
 
 Output of `sql/09_master_cohort_standalone.sql` **rev 2.3** (full audit
 universe, 33,003 people), validated by `analysis/07_master_cohort_check.py`
-rev 3. **All twelve integrity checks pass.** That is a data-integrity result,
-not a methodological sign-off.
+**rev 4**, which applies the fourth-review rules. **All fourteen integrity
+checks pass.** That is a data-integrity result, not a methodological sign-off.
 
 Three runs — rev 2.1 (1,139 rows), rev 2.2 (653), rev 2.3 (33,003) — give the
 same primary A/B/C/D. The checker recomputes every cohort from residency ×
@@ -29,6 +29,30 @@ for all 33,003 people.
    The full audit universe is returned; `cochrane_facing` is a presentation
    flag, never a filter.
 
+## Fourth-review items (rev 2.4 / checker rev 4)
+
+6. **Cohort B = any non-Town resident placed in Cochrane.** Cochrane-catchment
+   residents are B (6 people, sub-counted as `b_catchment`), so A + B is every
+   Cochrane placement with known residency. Unresolved-residency Cochrane
+   placements (9) are their own category, never A or B. This is the reviewer's
+   recommendation; it is one line to reverse if the consultant wants the
+   narrower "outside the catchment" meaning.
+7. **PHN validity.** All-zero or malformed identifiers are rejected in every
+   path. The rev 2.3 universe carried one: PHN `000000000`, demand 2024-11-10,
+   death 1999-01-09.
+8. **Death before demand** is an impossible linkage: 2 people in the universe.
+   They stay in the universe with `record_valid = 0` and a reason and can never
+   take a cohort. Hard check inside A–D: zero. Neither of the two was in A–D
+   before the fix, so 87/143/191/68 are unaffected.
+9. **`confidence` renamed `registry_history_depth`** — it measured years of
+   registry history, not confidence in residency at demand (71 UNRESOLVED
+   people were labelled HIGH). `residency_evidence` replaces it for the verdict
+   actually used: STRONG (mapped address in the year before demand), MODERATE
+   (in the lookback but not that year), NONE.
+10. **The fallback is historical evidence only.** Its addresses are 4–31 years
+    old (median 16; median 18 among the unplaced). It no longer reduces the
+    residency uncertainty around D.
+
 ## The four cohorts
 
 | Cohort | | **Primary** (latest address) | | Sensitivity (any-3-year) | |
@@ -37,7 +61,10 @@ for all 33,003 people.
 | C | resident, placed outside | **191** | 55.2% | 208 | 55.9% |
 | D | resident, no placement in source by 2026-03-31 | **68** | 19.7% | 74 | 19.9% |
 | | **resident demand A + C + D** | **346** | | 372 | |
-| B | non-resident, placed in Cochrane | **137** | | 134 | |
+| B | **non-Town** resident, placed in Cochrane | **143** | | 140 | |
+| | of which Cochrane catchment | 6 | | | |
+| — | Cochrane placement, residency unresolved (own category) | 9 | | | |
+| | **A + B — every Cochrane placement with known residency** | **230** | | | |
 
 The two rules differ for 37 of 653 people, all in one direction — 24 Town → not
 a resident, 11 catchment → not a resident, 2 Town → catchment. Nobody moves
@@ -81,31 +108,31 @@ placed, **141 of 278 (50.7%)**. Absence of a request says nothing about
 residency and must not narrow the pool. Rev 2.2's gate is withdrawn; rev 2.3
 returns everyone.
 
-Unresolved on the primary rule, approved, unplaced, **province-wide: 114**
-(58 no registry record; 56 registry record with no year in the lookback).
+Unresolved on the primary rule, approved, unplaced, **province-wide: 114**,
+of which **113 are valid records** (one is the all-zero PHN). 57 have no
+registry record; 56 have a registry record but no year in the lookback.
+
+| | D |
+|---|---|
+| **Primary** | **68** |
+| **Mathematical maximum** — primary + every valid unresolved person counted as Town | **181** |
+
+The maximum is deliberately extreme and is **not an estimate**. Nothing
+reduces it: not the fallback, not a proportional allocation.
 
 `residency_fallback` — the latest mapped address before the demand event at
-any distance — resolves **22** of them: **0 Town, 0 catchment, 22 not
-Cochrane**, with addresses 4 to 28 years stale. The remaining **92** cannot be
-resolved from the registry: 58 have no registry record at all, and 34 have
-registry rows only *after* their demand event (recent arrivals to Alberta, or
-a PHN issue). 7 of the 92 carry a recorded Cochrane request.
+any distance — is reported as **historical evidence only**. Among the 113, it
+finds a prior address for 22, all non-Cochrane, **4 to 28 years old, median
+18**. A 2008 address does not prove where someone lived in 2024. The other 91
+have no pre-demand address at all: 57 no registry record, 34 registry rows
+only after the demand event. 7 of the 113 carry a recorded Cochrane request,
+reported and not used.
 
-| Tier | D | What it is |
-|---|---|---|
-| Primary | **68** | latest pre-demand address = Town |
-| + fallback-Town | **68** | fallback found zero stale Cochrane addresses |
-| + every truly unresolved person counted as Town | **160** | mathematical maximum — every unresolved person in Calgary and Edmonton assumed to be from Cochrane |
+On the sensitivity rule the equivalent maximum is 74 + 113 = 187.
 
-For scale only, and labelled as an assumption rather than a count: among
-*resolved* approved-unplaced people province-wide, 68 of 5,225 (1.30%) are
-Town residents. Distributing the 92 the same way adds about 1 person. The
-maximum of 160 is arithmetically correct and, on the evidence of the fallback
-(0 of 22 resolvable were anywhere near Cochrane), very loose.
-
-**Correction:** an earlier message gave the unresolved-with-request count as 8
-and the bound as 82. The query's own flag gives 9 and 83. The rule itself is
-now withdrawn, so neither figure is used.
+**Corrections on the record:** an earlier message gave the unresolved-with-
+request count as 8 (it was 9) and treated the fallback as resolving residency
+(it does not). Both rules are withdrawn.
 
 ## Reconciliation — full transition matrix, primary rule
 
@@ -154,11 +181,17 @@ universe must not be filtered.
 
 - Cohort D is **measurable, reconciled, reproducible on two runs, and not
   signed off.**
-- Primary figures for the reviewer: **A 87 · B 137 · C 191 · D 68 (12 / 25 /
-  31)**; resident demand 346; sensitivity 372.
+- Primary figures: **A 87 · B 143 · C 191 · D 68 (12 / 25 / 31)**; resident
+  demand 346; sensitivity 372. Reviewer status after the fourth pass: A, C and
+  resident demand accepted under the latest-residence definition; D
+  mechanically validated with the source-coverage wording mandatory; B
+  resolved at 143 on the reviewer's recommendation, pending the consultant's
+  confirmation that B means non-Town.
 - Nothing here goes into the report until the reviewer clears it, and every D
   figure carries "no Type A/B placement observed in the Calgary/Edmonton
   Strata placement source by 31 March 2026".
-- Rev 2.3 has been run. The already-in-care-at-demand test affects zero
-  rows; the fallback tier adds zero Town residents. 35 people are
-  left-truncated in the full universe, none of them in any cohort.
+- Rev 2.3 has been run; rev 2.4 (PHN validity, record_valid, the B rule,
+  residency_evidence) is written and not yet run. The checker rev 4 already
+  applies the rev 2.4 rules to the rev 2.3 extract, which is where the figures
+  above come from. 35 people are left-truncated in the full universe, none in
+  any cohort.

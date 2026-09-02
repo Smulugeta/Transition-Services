@@ -1,6 +1,6 @@
 -- ============================================================================
 -- MASTER DEMAND COHORT — A / B / C / D — STANDALONE, ONE ROW PER PERSON
--- Revision 2.3, after third review. Paste-and-run.
+-- Revision 2.4, after fourth review. Paste-and-run.
 -- Feed the CSV to analysis/07_master_cohort_check.py.
 --
 -- WHAT CHANGED AND WHY (each item is a review finding)
@@ -63,6 +63,31 @@
 --     registry record at all cannot be resolved and stay UNRESOLVED; the
 --     checker reports them as the mathematical maximum on D.
 --
+-- REV 2.4 — FOURTH REVIEW
+--   · PHN validity. An identifier that normalises to all zeros, or to
+--     anything other than nine digits, is rejected in BOTH the patient and
+--     the waitlist path. The first run carried PHN 000000000 linked to a
+--     1999 death and a 2024 demand event.
+--   · Death before demand. A death date earlier than the demand event is an
+--     impossible linkage (2 people in the first run). The row stays in the
+--     audit universe with record_valid = 0 and a reason, and can never take
+--     a cohort. The checker requires zero such rows inside A-D.
+--   · confidence renamed registry_history_depth: it measures how many years
+--     of registry history exist, not confidence in residency at demand. 71
+--     UNRESOLVED people were labelled HIGH. A real residency_evidence column
+--     is added: STRONG = mapped address in the year before demand;
+--     MODERATE = mapped address in the lookback but not that year; NONE.
+--   · Cohort B = NON-TOWN resident placed in Cochrane, so A + B is every
+--     Cochrane placement with known residency. Cochrane-catchment residents
+--     (6 in the first run) are therefore B, flagged b_catchment = 1 so they
+--     can be shown separately. Unresolved-residency Cochrane placements (9)
+--     are their own category, never A or B. Reviewer recommendation; one
+--     line to reverse.
+--   · residency_fallback is HISTORICAL EVIDENCE ONLY. Its addresses are 4-31
+--     years old (median 16). It does not remove anyone from the residency
+--     uncertainty around D; the maximum is primary D plus every valid
+--     unresolved approved-unplaced person.
+--
 -- LEFT-TRUNCATION, AFTER THE FIRST RUN: with approval as the demand event, a
 -- person approved before 2021-04-01 has a demand event outside the window and
 -- is EXCLUDED, not flagged. The flag therefore marks almost nobody (1 person
@@ -111,10 +136,13 @@ w as (
 
 -- ── STEP 1 — PHN ───────────────────────────────────────────────────────────
 pat_key as (
-    select p.id as patient_id,
-           case when regexp_replace(p.identifier1::string,'[^0-9]','') = '' then null
-                else lpad(regexp_replace(p.identifier1::string,'[^0-9]',''),9,'0') end as phn
-    from db_source_strata_health_pathways.raw.patient p
+    select patient_id, iff(phn_raw is null or phn_raw = '000000000' or length(phn_raw) <> 9, null, phn_raw) as phn
+    from (
+        select p.id as patient_id,
+               case when regexp_replace(p.identifier1::string,'[^0-9]','') = '' then null
+                    else lpad(regexp_replace(p.identifier1::string,'[^0-9]',''),9,'0') end as phn_raw
+        from db_source_strata_health_pathways.raw.patient p
+    )
 ),
 
 -- ── STEP 2 — ADMISSIONS, ANY DATE ──────────────────────────────────────────
@@ -147,6 +175,8 @@ adm_rep as (                          -- REPORTING scope
 
 -- ── STEP 3 — WAITLIST: APPROVAL DATE, FIRST APPEARANCE, LAST DAY ON LIST ───
 wl as (
+    select phn, census_date, approved_dt, current_location, rated_cochrane
+    from (
     select lpad(regexp_replace(t.phn::string,'[^0-9]',''),9,'0') as phn,
            t.census_date::date                                   as census_date,
            coalesce(t.assess_approved_date,
@@ -159,6 +189,8 @@ wl as (
     cross join w
     where t.census_date >= w.win_start and t.census_date < w.win_end
       and t.phn is not null
+    )
+    where phn <> '000000000' and length(phn) = 9 and regexp_replace(phn,'[^0-9]','') = phn
 ),
 census_bounds as (select min(census_date) as first_dt, max(census_date) as last_dt from wl),
 first_list as (
@@ -245,6 +277,10 @@ residency as (
            max_by(in_town, iff(in_window=1 and mapped=1, fye, null))    as town_latest,
            max_by(in_area, iff(in_window=1 and mapped=1, fye, null))    as area_latest,
            max(iff(in_window=1 and mapped=1, fye, null))                as latest_window_fye,
+           -- for residency_evidence: was there a mapped address in the year
+           -- immediately before demand, and is the lookback internally stable
+           max(iff(in_window=1 and mapped=1 and fye = demand_fye-1, 1, 0)) as mapped_year_before,
+           count(distinct iff(in_window=1 and mapped=1 and in_town=1, fye, null)) as n_town_years_in_window,
            -- FALLBACK: latest mapped address before the demand event at any
            -- distance. Resolves "registry record, no year in lookback".
            count_if(pre_demand=1 and mapped=1)                          as n_predemand_mapped,
@@ -290,8 +326,11 @@ level3_after as (
     group by a.phn
 ),
 deaths as (
-    select lpad(regexp_replace(stkh_num_1::string,'[^0-9]',''),9,'0') as phn, min(dethdate::date) as death_dt
-    from db_source_ah_vital_stats.curated.tb_vital_stats_deaths_adhoc group by 1
+    select phn, min(death_dt) as death_dt from (
+        select lpad(regexp_replace(stkh_num_1::string,'[^0-9]',''),9,'0') as phn, dethdate::date as death_dt
+        from db_source_ah_vital_stats.curated.tb_vital_stats_deaths_adhoc
+    ) where phn <> '000000000' and length(phn) = 9
+    group by 1
 ),
 
 -- ── STEP 7 — ONE ROW PER PERSON ────────────────────────────────────────────
@@ -324,8 +363,21 @@ master as (
                 when r.area_fallback = 1                   then 'Cochrane catchment'
                 else 'Not a Cochrane-area resident' end                              as residency_fallback,
            iff(r.fallback_fye is null, null, d.demand_fye - r.fallback_fye)          as fallback_years_before_demand,
+           -- depth of registry history. NOT confidence in residency at demand.
            case when coalesce(r.n_registry_fye,0)>=10 then 'HIGH'
-                when coalesce(r.n_registry_fye,0)>=5  then 'MEDIUM' else 'LOW' end   as confidence,
+                when coalesce(r.n_registry_fye,0)>=5  then 'MEDIUM' else 'LOW' end   as registry_history_depth,
+           -- evidence for the residency verdict actually used
+           case when coalesce(r.n_window_mapped,0) = 0 then 'NONE - no mapped address in lookback'
+                when r.mapped_year_before = 1          then 'STRONG - mapped address in the year before demand'
+                else 'MODERATE - mapped address in lookback, not the most recent year' end as residency_evidence,
+           iff(coalesce(r.n_window_mapped,0) > 0
+               and (coalesce(r.n_town_years_in_window,0) = 0
+                    or coalesce(r.n_town_years_in_window,0) = coalesce(r.n_window_mapped,0)), 1, 0)
+                                                                                       as residency_stable_in_lookback,
+           -- record validity: an impossible linkage can never take a cohort
+           iff(x.death_dt is not null and x.death_dt < d.demand_dt, 0, 1)             as record_valid,
+           iff(x.death_dt is not null and x.death_dt < d.demand_dt,
+               'death date precedes demand event', null)                               as record_invalid_reason,
            o.first_placement_dt, o.first_placement_after_followup, o.n_sameday_first,
            fs.first_placement_in_cochrane, fs.first_placement_site, fs.first_placement_stream,
            l3.first_level3_dt,
@@ -349,18 +401,23 @@ master as (
 ),
 classified as (
     select m.*,
-           -- PRIMARY: latest mapped address in the lookback (reviewer decision 2)
-           case when was_approved = 0 then null
+           -- PRIMARY: latest mapped address in the lookback (reviewer decision 2).
+           -- B = any NON-TOWN resident placed in Cochrane (fourth review).
+           case when was_approved = 0 or record_valid = 0 then null
                 when residency_latest = 'Town of Cochrane' and first_placement_in_cochrane = 1 then 'A'
-                when residency_latest = 'Not a Cochrane-area resident'
+                when residency_latest in ('Not a Cochrane-area resident','Cochrane catchment')
                      and first_placement_in_cochrane = 1                                    then 'B'
                 when residency_latest = 'Town of Cochrane' and placed = 1                   then 'C'
                 when residency_latest = 'Town of Cochrane' and placed = 0                   then 'D'
                 else null end as cohort,
+           iff(residency_latest = 'Cochrane catchment' and first_placement_in_cochrane = 1
+               and was_approved = 1 and record_valid = 1, 1, 0)                          as b_catchment,
+           iff(residency_latest = 'UNRESOLVED' and first_placement_in_cochrane = 1
+               and was_approved = 1 and record_valid = 1, 1, 0)                          as cochrane_placement_residency_unresolved,
            -- SENSITIVITY: the published any-address-in-three-years rule
-           case when was_approved = 0 then null
+           case when was_approved = 0 or record_valid = 0 then null
                 when residency_any3 = 'Town of Cochrane' and first_placement_in_cochrane = 1 then 'A'
-                when residency_any3 = 'Not a Cochrane-area resident'
+                when residency_any3 in ('Not a Cochrane-area resident','Cochrane catchment')
                      and first_placement_in_cochrane = 1                                  then 'B'
                 when residency_any3 = 'Town of Cochrane' and placed = 1                   then 'C'
                 when residency_any3 = 'Town of Cochrane' and placed = 0                   then 'D'
