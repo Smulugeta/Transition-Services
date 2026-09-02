@@ -7,12 +7,15 @@ Everything here is reproducible from the SQL extracts and the two analysis
 scripts. Every published figure traces to a numbered block in
 `sql/01_demand_capacity_report.sql`.
 
-> **Status after second review (2026-09-02).** A, B and C are **provisional**.
-> **Cohort D is not signed off. Do not use A + C + D. Do not call D validated.
-> A clean run of the checker is a data-integrity result, not a methodological
-> sign-off.** Two rounds of review found fourteen problems in the cohort D
-> work; all are corrected or measured in `sql/09` and `analysis/07` as
-> described under *Cohort D*. Neither has been run against the warehouse.
+> **Status (2026-09-02, after the first real run).** A, B and C are
+> **provisional**. **Cohort D is measurable and reconciled but not signed off.
+> Do not use A + C + D. Do not call D validated.** `sql/09` rev 2.1 has been
+> run against the warehouse and all thirteen integrity checks pass; the
+> results, the reconciliation against the published A/B/C, and three
+> definitional questions for the reviewer are in
+> `reference/master_cohort_run_2026-09-02.md`. Headline on that run: resident
+> demand A + C + D = 90 + 208 + 74 = 372; D splits 14 still waiting / 26 died /
+> 34 exited with no placement observed in this source.
 > The word "province-wide" is **withdrawn permanently for this source**:
 > `sql/10_coverage_checks.sql` has been run and the admissions source is the
 > Calgary and Edmonton Strata instances only. Every D figure carries that
@@ -288,13 +291,19 @@ rather than on where people live.
 
 **Query 09 is the paste-and-run form of 08** and needs nothing materialised
 first. Its output is one row per person; `analysis/07_master_cohort_check.py`
-runs nine integrity checks that must all pass, tabulates A–D with D split by
-outcome, runs everything with and without the left-truncated, sizes the
-unresolved-residency upper bound on D, and reconciles person by person against
-the published A/B/C. The reconciliation will not match exactly — the anchor
-moves earlier for anyone with a waitlist record — and the size and direction
-of that difference is itself something to report rather than adjust away.
-Neither query has been run against the warehouse yet.
+runs thirteen integrity checks that must all pass (it stops otherwise),
+tabulates A–D with D1/D2/D3, reports both residency rules with the transition
+matrix, sizes the unresolved-residency upper bound on D from people with a
+Cochrane signal only, and reconciles person by person against the published
+A/B/C. The first real run is recorded in
+`reference/master_cohort_run_2026-09-02.md`; every one of the 31 people who
+moved or vanished in reconciliation is an intended effect of a review fix, and
+the file says which.
+
+Rev 2.2 changed one thing after that run: an unresolved-residency person is
+kept only with a recorded Cochrane request or a Cochrane placement. Rev 2.1
+kept every unresolved person in the province and made the upper bound on D
+meaningless (188); the honest figure on the same data is 8.
 
 ### Not to be used yet
 
@@ -347,6 +356,7 @@ build/
 reference/
   cochrane_address_lookup.csv     129 Cochrane-tagged addresses, pre-classified
   coverage_check_results.md       outputs of sql/10 with interpretation (run 2026-09-02)
+  master_cohort_run_2026-09-02.md first real run of sql/09: A-D, D1/D2/D3, reconciliation
 ```
 
 ### Running things
@@ -407,10 +417,13 @@ Not blocking anything published, but each would strengthen the case:
    admissions per 1,000 seniors — benchmarkable against comparable Alberta
    communities and projectable against the town's growth. Single most useful
    number not yet in hand, and it needs no external request.
-2. **Run `sql/09` rev 2.1, then the checker.** The coverage checks are done.
-   Still for ALA: is there a source covering Central-zone placements of
-   Calgary-zone residents (without it D3 cannot be separated from out-of-zone
-   placement); the Retired-DAL/DEL codes; which approval field is operational. Waitlist history before 2021-04-01 would additionally
+2. **Reviewer decisions** on the three questions at the end of
+   `reference/master_cohort_run_2026-09-02.md`: the temporal-alignment
+   definition (moves published A/C by −7 / −12), the residency rule (26
+   people, one direction), and whether D3 = 34 is quotable as an upper bound.
+   Then re-run `sql/09` rev 2.2 for the corrected unresolved handling. Still
+   for ALA: a Central-zone source; the Retired-DAL/DEL codes; which approval
+   field is operational. Waitlist history before 2021-04-01 would additionally
    resolve the 1,604 left-truncated people and turn the 138 displacement floor
    into a count.
 3. **Confirm with ALA:** the meaning of `rating = 0` in the waitlist source,

@@ -1,6 +1,6 @@
 -- ============================================================================
 -- MASTER DEMAND COHORT — A / B / C / D — STANDALONE, ONE ROW PER PERSON
--- Revision 2.1, after second review and the coverage checks. Paste-and-run.
+-- Revision 2.2, after the first real run. Paste-and-run.
 -- Feed the CSV to analysis/07_master_cohort_check.py.
 --
 -- WHAT CHANGED AND WHY (each item is a review finding)
@@ -40,6 +40,13 @@
 --      unmapped code no longer deletes the person.
 --  10. NULL source_location kept (is distinct from). Same-day ties broken
 --      deterministically and counted.
+--
+-- LEFT-TRUNCATION, AFTER THE FIRST RUN: with approval as the demand event, a
+-- person approved before 2021-04-01 has a demand event outside the window and
+-- is EXCLUDED, not flagged. The flag therefore marks almost nobody (1 person
+-- in the first run). The exclusion is the temporal-alignment fix working: A/C
+-- and D are both selected on demand arising inside the window. It is also why
+-- the master A/C are smaller than the published A/C - see the reconciliation.
 -- ============================================================================
 with
 
@@ -122,7 +129,9 @@ wl as (
            t.census_date::date                                   as census_date,
            coalesce(t.assess_approved_date,
                     t.calculated_assess_approved_date)::date     as approved_dt,
-           t.current_location
+           t.current_location,
+           iff(t.service_provider_rated_site ilike '%cochrane%'
+               or t.service_provider_rated_site ilike '%hawthorne%', 1, 0) as rated_cochrane
     from db_team_continuing_seniors_care.calgary_bi.ts_waitlist_trend_with_ratings_1671 t
     join rep_care_type r on r.care_type = trim(t.care_type)
     cross join w
@@ -137,7 +146,8 @@ first_list as (
            min_by(l.current_location, l.census_date)   as setting_at_list_entry,
            max(l.census_date)                          as last_seen_on_list,
            iff(max(l.census_date) = cb.last_dt, 1, 0)  as on_list_at_followup,   -- D1
-           iff(min(l.census_date) = cb.first_dt, 1, 0) as left_truncated
+           iff(min(l.census_date) = cb.first_dt, 1, 0) as left_truncated,
+           max(l.rated_cochrane)                       as rated_cochrane
     from wl l cross join census_bounds cb
     group by l.phn, cb.last_dt, cb.first_dt
 ),
@@ -157,6 +167,7 @@ demand as (
            l.first_list_appearance, l.first_approval_dt, l.setting_at_list_entry,
            l.last_seen_on_list, coalesce(l.on_list_at_followup,0) as on_list_at_followup,
            coalesce(l.left_truncated, 0)                                    as left_truncated,
+           coalesce(l.rated_cochrane, 0)                                    as rated_cochrane,
            h.first_residential_ever, h.first_residential_stream
     from first_list l
     full outer join (select phn, min(admission_date) as first_rep_adm from adm_rep group by phn) a
@@ -252,7 +263,7 @@ deaths as (
 master as (
     select d.phn, d.demand_dt, d.demand_fye, d.demand_event_type, d.was_approved,
            d.first_list_appearance, d.first_approval_dt, d.setting_at_list_entry,
-           d.last_seen_on_list, d.on_list_at_followup, d.left_truncated,
+           d.last_seen_on_list, d.on_list_at_followup, d.left_truncated, d.rated_cochrane,
            d.first_residential_ever, d.first_residential_stream,
            coalesce(r.n_registry_fye,0) as n_registry_fye, coalesce(r.n_window_fye,0) as n_window_fye,
            coalesce(r.n_window_mapped,0) as n_window_mapped, r.latest_window_fye,
@@ -309,10 +320,16 @@ classified as (
     from master m
 )
 
+-- OUTPUT. Rev 2.2: an UNRESOLVED person is kept only with a Cochrane signal —
+-- a recorded Cochrane request or a Cochrane placement. The first real run kept
+-- every unresolved person in the province (490 of 526 had no Cochrane link)
+-- and made the upper bound on D meaningless. Unresolved-with-signal is the
+-- honest upper-bound add to D and nothing wider.
 select *
 from classified
-where residency_any3 <> 'Not a Cochrane-area resident'
-   or residency_latest <> 'Not a Cochrane-area resident'
+where residency_any3   in ('Town of Cochrane','Cochrane catchment')
+   or residency_latest in ('Town of Cochrane','Cochrane catchment')
    or first_placement_in_cochrane = 1
+   or (residency_any3 = 'UNRESOLVED' and rated_cochrane = 1)
 order by cohort nulls last, demand_dt
 ;

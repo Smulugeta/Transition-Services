@@ -132,9 +132,17 @@ def missingness(rows):
     for k, v in Counter(col(r,"RESIDENCY_MISSING_REASON") for r in rows).most_common():
         d = sum(1 for r in rows if col(r,"RESIDENCY_MISSING_REASON")==k and not r["_pl"] and r["_app"])
         print(f"  {k:44s} {v:6,}  {pct(v,n)}   approved & unplaced {d:5,}")
-    un = sum(1 for r in rows if r["_resA"]=="UNRESOLVED" and not r["_pl"] and r["_app"])
     cD = sum(1 for r in rows if r["_coh"]=="D")
-    print(f"\n  unresolved, approved, unplaced: {un:,}. Upper bound on D if all were Town: {cD+un:,} vs {cD:,}.\n")
+    un_all = [r for r in rows if r["_resA"]=="UNRESOLVED" and not r["_pl"] and r["_app"]]
+    if "RATED_COCHRANE" in rows[0]:
+        un = sum(1 for r in un_all if col(r,"RATED_COCHRANE","0")=="1")
+        print(f"\n  unresolved, approved, unplaced, WITH a recorded Cochrane request: {un:,}.")
+        print(f"  Upper bound on D: {cD+un:,} vs {cD:,}. ({len(un_all)-un:,} further unresolved carry no Cochrane signal")
+        print(f"  and are not counted - an extract from a rev < 2.2 query keeps province-wide noise here.)\n")
+    else:
+        print(f"\n  unresolved, approved, unplaced: {len(un_all):,} - but this extract has no RATED_COCHRANE column,")
+        print(f"  so most of these are province-wide people with no Cochrane link. Re-run sql/09 rev 2.2;")
+        print(f"  do NOT read {cD+len(un_all):,} as an upper bound on D.\n")
 
 # ── 5. left-truncation, by year ─────────────────────────────────────────────
 def truncation_and_year(rows):
@@ -142,6 +150,9 @@ def truncation_and_year(rows):
     for lab, sel in (("all", rows), ("excluding left-truncated", [r for r in rows if not r["_lt"]])):
         c = Counter(r["_coh"] for r in sel if r["_coh"]); res = c["A"]+c["C"]+c["D"]
         print(f"  {lab:28s} A {c['A']:5,}  C {c['C']:5,}  D {c['D']:5,}   D share {pct(c['D'],res)}")
+    lt = sum(1 for r in rows if r["_lt"])
+    print(f"  flagged left-truncated: {lt:,}. With approval as the demand event, pre-window approvals are")
+    print(f"  EXCLUDED rather than flagged, so this flag marks almost nobody. See the reconciliation.")
     print(f"\n   {'FYE':>6} {'A':>6} {'C':>6} {'D1':>6} {'D2':>6} {'D3':>6}   censoring rises to the right")
     for y in sorted({r["DEMAND_FYE"] for r in rows if r["_coh"]}):
         g = [r for r in rows if r["DEMAND_FYE"]==y and r["_coh"]]
