@@ -117,9 +117,11 @@
 --      facility and is NOT used to classify residency (a Cochrane facility
 --      would otherwise manufacture Town residents - the exact contamination
 --      the registry method exists to avoid). Reported, not silently dropped.
---   ADDITION C — effective_from_date often equals creation_date (the record
---      was created that day). Flagged as strata_from_equals_creation so the
---      checker can say how many Strata resolutions rest on a creation date.
+--   ADDITION C — effective_from_date often equals patient_h.creation_date
+--      (the patient record was created that day). Flagged as
+--      strata_from_equals_creation so the checker can say how many Strata
+--      resolutions rest on a record-creation date rather than a move-in date.
+--      creation_date is NOT an address_h column.
 --   Cohorts are computed on residency_final; cohort_registry_only is kept so
 --   the change attributable to Strata is visible.
 --
@@ -380,13 +382,17 @@ strata_addr as (
            upper(regexp_replace(ah.postal_code, '[^A-Za-z0-9]', '')) as postal_norm,
            ah.effective_from_date::date                            as eff_from,
            ah.effective_to_date::date                              as eff_to,
-           ah.creation_date::date                                  as created
-    from (select distinct id as patient_id, address_id
+           ph.created                                              as created   -- from patient_h, not address_h
+    -- creation_date is a patient_h column. The earliest creation of the
+    -- (patient, address record) pairing is what an address version's start
+    -- date is compared against in ADDITION C.
+    from (select id as patient_id, address_id, min(creation_date)::date as created
           from db_source_strata_health_pathways.raw.patient_h
-          where address_id is not null) ph
+          where address_id is not null
+          group by 1,2) ph
     join pat_key k on k.patient_id = ph.patient_id
     join (select distinct id, street_address, city_name, postal_code, effective_from_date,
-                 effective_to_date, creation_date
+                 effective_to_date
           from db_source_strata_health_pathways.raw.address_h) ah on ah.id = ph.address_id
     where k.phn is not null
 ),

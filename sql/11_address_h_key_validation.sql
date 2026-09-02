@@ -14,8 +14,9 @@
 --     in this table as residences. That is the contamination the registry
 --     method exists to avoid, and rule 3 (effective at demand) only partly
 --     protects against it.
---   · The first version's effective_from_date equalled creation_date, i.e.
---     the record-creation date, not necessarily a move-in date.
+--   · The first version's effective_from_date equalled patient_h.creation_date
+--     (creation_date is a patient_h column, not address_h), i.e. the date the
+--     patient record was created, not necessarily a move-in date.
 --
 -- WHAT THESE QUERIES DECIDE
 --   A. Does a person ever have MORE THAN ONE address_id in patient_h? If yes,
@@ -84,9 +85,10 @@ with k as (
     where lpad(regexp_replace(identifier1::string,'[^0-9]',''),9,'0') = '498338261'
 )
 select ph.id as patient_id, ph.address_id, ah.street_address, ah.city_name, ah.postal_code,
-       ah.effective_from_date, ah.effective_to_date, ah.creation_date
+       ah.effective_from_date, ah.effective_to_date, ph.created as patient_record_created
 from k
-join (select distinct id, address_id from db_source_strata_health_pathways.raw.patient_h) ph on ph.id = k.patient_id
+join (select id, address_id, min(creation_date) as created
+      from db_source_strata_health_pathways.raw.patient_h group by 1,2) ph on ph.id = k.patient_id
 join db_source_strata_health_pathways.raw.address_h ah on ah.id = ph.address_id
 order by ah.effective_from_date;
 -- expected: a Surrey BC row, V3Z 9T1, effective from 2021-05-18, active on the
@@ -104,14 +106,17 @@ order by 3 desc limit 60;
 -- 2.5 refuses to classify residency from such an address.
 
 -- ── F. IS effective_from_date A MOVE-IN DATE OR A RECORD-CREATION DATE? ────
-select count(*)                                                  as first_versions,
-       count_if(effective_from_date::date = creation_date::date) as from_equals_creation,
-       round(100.0*count_if(effective_from_date::date = creation_date::date)/count(*),1) as pct
+-- creation_date is on patient_h. Compare each address record's FIRST version
+-- start against the earliest creation of the patient/address pairing.
+select count(*)                                          as first_versions,
+       count_if(first_from = created)                    as from_equals_patient_creation,
+       round(100.0*count_if(first_from = created)/count(*),1) as pct
 from (
-    select id, effective_from_date, creation_date,
-           row_number() over (partition by id order by effective_from_date) as rn
-    from (select distinct id, effective_from_date, creation_date from db_source_strata_health_pathways.raw.address_h)
-) where rn = 1;
+    select ah.id, min(ah.effective_from_date)::date as first_from, min(ph.creation_date)::date as created
+    from (select distinct id, effective_from_date from db_source_strata_health_pathways.raw.address_h) ah
+    join db_source_strata_health_pathways.raw.patient_h ph on ph.address_id = ah.id
+    group by ah.id
+);
 -- a high share means the first address's start date is when the record was
 -- created in Strata, not when the person moved there. Rule 3 still works for
 -- "active at demand" but the address may have been current for longer.
