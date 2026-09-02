@@ -1,8 +1,11 @@
-# Master cohort — first real run, 2026-09-02
+# Master cohort — first real runs, 2026-09-02
 
-Output of `sql/09_master_cohort_standalone.sql` rev 2.1 (1,139 people),
-validated by `analysis/07_master_cohort_check.py`. **All thirteen integrity
-checks pass.** That is a data-integrity result. It is not a methodological
+Output of `sql/09_master_cohort_standalone.sql`, validated by
+`analysis/07_master_cohort_check.py`. Run twice: rev 2.1 (1,139 rows,
+province-wide unresolved kept) and rev 2.2 (653 rows, unresolved kept only
+with a Cochrane signal). **Every A/B/C/D figure below is identical between the
+two runs** — the filter change touched only the unresolved pool, as intended.
+**All thirteen integrity checks pass on both.** That is a data-integrity result. It is not a methodological
 sign-off, and nothing here is cleared for the report until the reviewer has
 read it.
 
@@ -37,8 +40,9 @@ Never approved and excluded: 0 in this extract.
 - 9 people in D were placed **after** 2026-03-31 (8 of them D1). They are D by
   the follow-up rule and are carried as sensitivity only.
 - 1 person in D received a Level 3 bed instead of the Type A/B bed approved.
-- Upper bound: 8 people are unresolved residency, unplaced, and carry a
-  recorded Cochrane request. If every one were a Town resident, D would be 82.
+- Upper bound: **9** people are unresolved residency, approved, unplaced, and
+  carry a recorded Cochrane request (rev 2.2's own `rated_cochrane` flag). If
+  every one were a Town resident, D would be **83**.
 
 ### By fiscal year of demand event
 
@@ -117,17 +121,19 @@ reasons — every one is an intended effect of a review fix:
 1 person flagged. With approval as the demand event, a pre-window approval is
 an exclusion, not a flag — see the 19 absent above.
 
-## Unresolved residency — what the first run got wrong
+## Unresolved residency — what rev 2.1 got wrong and rev 2.2 fixed
 
 Rev 2.1 kept every unresolved person in the province in the output (526 of
 1,139 rows; 490 with no Cochrane link at all) and the checker then printed
 "upper bound on D: 188". That number is meaningless. Rev 2.2 keeps an
 unresolved person only with a recorded Cochrane request or a Cochrane
-placement, and the checker computes the bound from those alone. On this run
-the honest figure is **8**, not 114.
+placement.
 
-The unresolved rate among people with a Cochrane link is about 5%, consistent
-with the published cohort's LOW-confidence share.
+Rev 2.2 run: 40 unresolved of 653 (6.1%) — 30 with a registry record but no
+year in the lookback, 10 with no registry record, 0 postal-mapping failures.
+All 40 carry a Cochrane signal. Of them, 9 are approved and unplaced: the
+upper-bound add to D. Consistent with the published cohort's 5% LOW-confidence
+share.
 
 ## Status
 

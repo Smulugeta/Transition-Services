@@ -9,8 +9,9 @@ scripts. Every published figure traces to a numbered block in
 
 > **Status (2026-09-02, after the first real run).** A, B and C are
 > **provisional**. **Cohort D is measurable and reconciled but not signed off.
-> Do not use A + C + D. Do not call D validated.** `sql/09` rev 2.1 has been
-> run against the warehouse and all thirteen integrity checks pass; the
+> Do not use A + C + D. Do not call D validated.** `sql/09` has been run against
+> the warehouse twice (rev 2.1 and rev 2.2, identical A–D) and all thirteen
+> integrity checks pass on both; the
 > results, the reconciliation against the published A/B/C, and three
 > definitional questions for the reviewer are in
 > `reference/master_cohort_run_2026-09-02.md`. Headline on that run: resident
@@ -421,8 +422,7 @@ Not blocking anything published, but each would strengthen the case:
    `reference/master_cohort_run_2026-09-02.md`: the temporal-alignment
    definition (moves published A/C by −7 / −12), the residency rule (26
    people, one direction), and whether D3 = 34 is quotable as an upper bound.
-   Then re-run `sql/09` rev 2.2 for the corrected unresolved handling. Still
-   for ALA: a Central-zone source; the Retired-DAL/DEL codes; which approval
+   Rev 2.2 has been re-run and confirmed. Still for ALA: a Central-zone source; the Retired-DAL/DEL codes; which approval
    field is operational. Waitlist history before 2021-04-01 would additionally
    resolve the 1,604 left-truncated people and turn the 138 displacement floor
    into a count.
