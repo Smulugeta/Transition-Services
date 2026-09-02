@@ -272,9 +272,13 @@ Expect the remaining count to fall to about 9.
   figure carries "no Type A/B placement observed in the Calgary/Edmonton
   Strata placement source by 31 March 2026".
 - Rev 2.5 has been run and its rule-10 results are accepted as mechanically
-  reproduced. **Rev 2.6 is written and not yet run**; it closes gates 1, 2, 4
-  and 5. Sign-off on 89 / 148 / 192 / 69 waits on the gate-1 sensitivity.
-  `sql/11` blocks A1, A2, E and G are to be reported back with it. The checker rev 4 already
+  reproduced. **Rev 2.7 is written and not yet run**; it closes gates 1, 2, 4
+  and 5 and carries Epic address history as sensitivity only. Sign-off on
+  89 / 148 / 192 / 69 waits on the gate-1 sensitivity. `sql/11` blocks A1, A2,
+  E, G and `sql/12` blocks 1, 2, 7 and the control are to be reported back.
+- **Epic is not in the hierarchy.** The sample's `EFF_START_DATE` values are
+  all 2026-09-01, which looks like a load date; if `sql/12` block 2 confirms
+  it, Epic cannot place anyone at a 2021–2025 demand date and stays out. The checker rev 4 already
   applies the rev 2.4 rules to the rev 2.3 extract, which is where the figures
   above come from. 35 people are left-truncated in the full universe, none in
   any cohort.

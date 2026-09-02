@@ -2,6 +2,15 @@
 """
 Validate and tabulate the master demand cohort (output of sql/09, rev 2.3).
 
+Revision 7 (Epic PAT_ADDR_CHNG_HX source validation, sensitivity only):
+  Reports sql/12 checks 3-11 and the control case from the epic_* columns of
+  sql/09 rev 2.7: active-at-demand distribution (0 / 1 / multiple), class
+  conflicts among multiple actives, the agreement matrix against Registry
+  where Registry is known, what Epic does to the remaining unresolved, and a
+  sensitivity cohort table. The production cohort is untouched. If most Epic
+  starts equal the source-wide maximum date, it says so: that is a load date,
+  not a residence period, and "active at demand" is structurally impossible.
+
 Revision 6 (seven sign-off gates):
   G1 approval-precedence sensitivity: people whose demand date changes,
      crossing a fiscal year, entering/leaving the window, changing residency,
@@ -110,6 +119,9 @@ def load(path):
         r["_plA"]   = day(col(r,"FIRST_PLACEMENT_DT_ALT"))
         r["_incA"]  = col(r,"FIRST_PLACEMENT_IN_COCHRANE_ALT","0") == "1"
         r["_sqlcohA"] = col(r,"COHORT_ALT") or None
+        r["_epic"]  = col(r,"EPIC_RESIDENCY") or None
+        r["_epicFin"] = col(r,"RESIDENCY_FINAL_EPIC_SENS") or None
+        r["_sqlcohE"] = col(r,"COHORT_EPIC_SENS") or None
         r["_resF"] = col(r,"RESIDENCY_FALLBACK") or None
         r["_dcls"] = col(r,"D_CLASS")
         r["_sqlcoh"] = col(r,"COHORT") or None
@@ -125,6 +137,7 @@ def load(path):
         r["_cohA"] = cohort_of(r, r["_resA"])          # SENSITIVITY, recomputed
         r["_cohAlt"] = (cohort_of(r, r["_resFinA"], pl=r["_plA"], inc=r["_incA"], inw=r["_inwA"])
                         if r["_resFinA"] else None)     # G1: approval-precedence anchor
+        r["_cohE"]  = cohort_of(r, r["_epicFin"]) if r["_epicFin"] else None   # Epic sensitivity
     return rows
 
 # ── 1. integrity — gate ──────────────────────────────────────────────────────
@@ -169,6 +182,10 @@ def integrity(rows):
                                                sum(1 for r in rows if "COHORT_ALT" in rows[0] and (r["_sqlcohA"] or None) != (r["_cohAlt"] or None))),
         ("cohort assigned to a person outside the window (G1 gating)",
                                                sum(1 for r in rows if r["_coh"] and not r["_inw"])),
+        ("Epic used in the PRODUCTION residency_final (must be sensitivity only)",
+                                               sum(1 for r in rows if r["_epic"] and r["_resFin"] not in (r["_resL"], r["_strat"] or "", UNRES))),
+        ("SQL COHORT_EPIC_SENS disagrees with recomputed Epic-sensitivity cohort",
+                                               sum(1 for r in rows if "COHORT_EPIC_SENS" in rows[0] and (r["_sqlcohE"] or None) != (r["_cohE"] or None))),
     ]
     bad = 0
     for label, c in checks:
@@ -336,6 +353,56 @@ def gate4(rows):
     print(f"   remaining unresolved+approved+unplaced: {len(rem):,}; unresolved SOLELY because of the guard: {len(sole):,}")
     print( "   A facility reference table confirmed by ALA is preferable to any threshold; sql/11 block E lists candidates.\n")
 
+# ── EPIC source validation (sql/12 checks 3-11 + control) ───────────────────
+def epic(rows):
+    print("EPIC / CONNECT CARE PAT_ADDR_CHNG_HX — SOURCE VALIDATION (sensitivity only; production cohort untouched)")
+    if "EPIC_RESIDENCY" not in rows[0] and "EPIC_N_ACTIVE_AT_DEMAND" not in rows[0]:
+        print("   not in this extract (pre rev 2.7).\n"); return
+    inw = [r for r in rows if r["_inw"] and r["_app"] and r["_valid"]]
+    n_act = Counter(min(int(col(r,"EPIC_N_ACTIVE_AT_DEMAND","0") or 0), 3) for r in inw)
+    print(f"   checks 3-4 — Epic addresses ACTIVE on the demand date, {len(inw):,} approved people:")
+    print(f"     zero {n_act[0]:,} ({pct(n_act[0],len(inw)).strip()})   exactly one {n_act[1]:,}   two {n_act[2]:,}   three or more {n_act[3]:,}")
+    ld = sum(1 for r in inw if col(r,"EPIC_START_EQUALS_SOURCE_MAX","0")=="1")
+    print(f"     active rows whose start date equals the SOURCE-WIDE MAXIMUM start date: {ld:,}")
+    if n_act[0] > 0.9*len(inw):
+        print("     -> over 90% have NO Epic address active at demand. Consistent with EFF_START_DATE being a")
+        print("        load date (every sample row started 2026-09-01): Epic cannot place anyone in 2021-2025.")
+    multi = [r for r in inw if int(col(r,"EPIC_N_ACTIVE_AT_DEMAND","0") or 0) > 1]
+    dis = [r for r in multi if col(r,"EPIC_CLASSES_DISAGREE","0")=="1"]
+    print(f"   check 5 — of {len(multi):,} with multiple actives, class CONFLICT (not chosen): {len(dis):,}")
+    guards = Counter(("facility" if col(r,"EPIC_IS_FACILITY","0")=="1" else "PO Box" if col(r,"EPIC_IS_POBOX","0")=="1"
+                      else "placeholder" if col(r,"EPIC_IS_PLACEHOLDER","0")=="1" else None) for r in inw if r["_epic"])
+    guards.pop(None, None)
+    print(f"   check 7 — Epic rows not used because facility / PO Box / placeholder: {dict(guards)}")
+    # check 8: agreement with Registry where Registry is known
+    known = [r for r in inw if r["_resL"] != UNRES and r["_epic"] in (TOWN, AREA, NOT)]
+    t = lambda x: "Town" if x == TOWN else "non-Town"
+    mat = Counter((t(r["_resL"]), t(r["_epic"])) for r in known)
+    agree = mat[("Town","Town")] + mat[("non-Town","non-Town")]
+    print(f"   check 8 — Registry known AND Epic classified: {len(known):,}")
+    for a in ("Town","non-Town"):
+        for b in ("Town","non-Town"): print(f"     Registry {a:8s} / Epic {b:8s} {mat[(a,b)]:6,}")
+    print(f"     agreement rate {pct(agree,len(known)).strip() if known else '—'}")
+    # checks 9-10: the remaining unresolved after Registry + Strata
+    rem = [r for r in rows if r["_resFin"]==UNRES and r["_app"] and not r["_pl"] and r["_valid"] and r["_inw"]]
+    er = Counter((r["_epic"] if r["_epic"] in (TOWN, AREA, NOT) else "still unresolved") for r in rem)
+    print(f"   checks 9-10 — the {len(rem):,} remaining unresolved, approved, unplaced under Epic:")
+    for k in (TOWN, AREA, NOT, "still unresolved"): print(f"     {k:36s} {er[k]:4,}")
+    # check 11: sensitivity cohort
+    cP = Counter(r["_coh"] for r in rows if r["_coh"]); cE = Counter(r["_cohE"] for r in rows if r["_cohE"])
+    print(f"   check 11 — SENSITIVITY cohort (registry -> Strata -> Epic), NOT the headline:")
+    print(f"     {'cohort':8s} {'production':>11} {'with Epic':>10} {'diff':>6}")
+    for k in ("A","B","C","D"): print(f"     {k:8s} {cP[k]:11,} {cE[k]:10,} {cE[k]-cP[k]:+6,}")
+    # control
+    c = next((r for r in rows if r["_phn"]=="498338261"), None)
+    if c:
+        print(f"   control PHN 49833-8261: Strata says {r_(c)}; Epic active at demand: {col(c,'EPIC_N_ACTIVE_AT_DEMAND','0') or '0'} row(s)"
+              f" -> '{col(c,'EPIC_ADDRESS_AT_DEMAND')}' {col(c,'EPIC_CITY_AT_DEMAND')} {col(c,'EPIC_ZIP_AT_DEMAND')} "
+              f"start {col(c,'EPIC_EFF_START')[:10]} -> {c['_epic'] or 'no active Epic address'}")
+        if c["_epic"] in (TOWN, AREA, NOT): print(f"     agrees with Strata: {c['_epic'] == c['_strat']}")
+    print()
+def r_(c): return f"{c['_strat']} ({col(c,'STRATA_CITY_AT_DEMAND')} {col(c,'STRATA_POSTAL_CODE_AT_DEMAND')})"
+
 # ── remaining unresolved clients ────────────────────────────────────────────
 def remaining(rows):
     rem = [r for r in rows if r["_resFin"]==UNRES and r["_app"] and not r["_pl"] and r["_valid"] and r["_inw"]]
@@ -452,7 +519,7 @@ def main(a):
     print(f"\n{a.master_csv}\n{len(rows):,} people in the audit universe\n")
     if not integrity(rows): sys.exit("INTEGRITY CHECKS FAILED — nothing else is printed. Fix the query first.")
     cP = cohorts(rows); uncertainty(rows, cP); strata(rows); evidence(rows); methods(rows); year_waits(rows)
-    gate1(rows); gate2(rows); gate3(rows); gate4(rows); remaining(rows); final_table(rows)
+    gate1(rows); gate2(rows); gate3(rows); gate4(rows); epic(rows); remaining(rows); final_table(rows)
     if a.published: reconcile(rows, a.published, cP)
     print("A clean run is a data-integrity result, not a methodological sign-off.")
 

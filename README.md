@@ -307,6 +307,33 @@ Three things the data forced beyond the rules:
 `effective_from_date` often equals the record's `creation_date`; the checker
 reports how many Strata resolutions rest on a creation date.
 
+### Epic / Connect Care address history — validation only, not in the hierarchy
+
+A third residency source exists: `DB_SOURCE_EPIC_CLARITY.RAW.PAT_ADDR_CHNG_HX`
+joined to `IDENTITY_ID` on `PAT_ID` with `IDENTITY_TYPE_ID = '221'` for the
+PHN. **It is not in the production hierarchy.** `sql/09` rev 2.7 carries it as
+`epic_*` columns and a `cohort_epic_sens` column; `residency_final` and
+`cohort` are unchanged from rev 2.6.
+
+The first sample raises the question the validation must answer first: every
+visible `EFF_START_DATE` is **2026-09-01** — the day before it was pulled —
+and several rows are zero-length with every address field null. That is the
+signature of a load or migration timestamp, not a residence period. If it
+holds across the table, no Epic row can be active on a 2021–2025 demand date
+and the source is at best a current-address snapshot. `sql/12` block 2
+quantifies it; the checker reports how many "active at demand" rows rest on a
+start date equal to the source-wide maximum.
+
+The rest of `sql/12` covers: whether 221 is the PHN and its uniqueness;
+digit-length validation before any padding; facility, PO Box and placeholder
+detection by concurrent occupancy; postal mapping through the same geography
+table (never `CITY_HX`); and the control case, PHN 49833-8261, which Strata
+places in Surrey on 2021-06-01. The checker's Epic block reports the
+active-at-demand distribution, class conflicts (never resolved by choosing —
+`CONFLICT` is a verdict), the agreement matrix against Registry where
+Registry is known, what Epic does to the remaining unresolved, and the
+sensitivity cohort.
+
 ### The controlling logic: one person-level demand cohort
 
 Each person's **demand event** is the earliest of their first Type A/B
@@ -395,6 +422,7 @@ sql/
   09_master_cohort_standalone.sql paste-and-run master cohort, rev 2 — one row per person
   10_coverage_checks.sql          zone coverage, legacy codes, NULL sources, ties, approval fields
   11_address_h_key_validation.sql proves the Strata join; A2 active-at-demand, E facility candidates, G raw PHN digits
+  12_epic_address_validation.sql  Epic PAT_ADDR_CHNG_HX source validation — run before Epic is ever promoted
 analysis/
   04_displacement_check.py        joins 02 and 03 — the 138-of-220 finding
   06_exit_classification.py       validates and classifies 05's output
@@ -471,10 +499,11 @@ Not blocking anything published, but each would strengthen the case:
    admissions per 1,000 seniors — benchmarkable against comparable Alberta
    communities and projectable against the town's growth. Single most useful
    number not yet in hand, and it needs no external request.
-2. **Run `sql/09` rev 2.6 and the checker** — it closes gates 1, 2, 4 and 5
-   and fills the approval-precedence column of the final table. Report back
-   `sql/11` blocks A1, A2, E and G. Still for ALA (a facility reference table
-   is now the most useful of these): a Central-zone source; the Retired-DAL/DEL codes; which approval
+2. **Run `sql/09` rev 2.7 and the checker** — it closes gates 1, 2, 4 and 5,
+   fills the approval-precedence column of the final table, and reports the
+   Epic validation as sensitivity. Report back `sql/11` blocks A1, A2, E and G
+   and `sql/12` blocks 1, 2, 7 and the control. Still for ALA (a facility
+   reference table is now the most useful of these): a Central-zone source; the Retired-DAL/DEL codes; which approval
    field is operational. Waitlist history before 2021-04-01 would additionally
    resolve the 1,604 left-truncated people and turn the 138 displacement floor
    into a count.

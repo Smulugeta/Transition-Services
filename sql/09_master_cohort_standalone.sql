@@ -1,6 +1,6 @@
 -- ============================================================================
 -- MASTER DEMAND COHORT — A / B / C / D — STANDALONE, ONE ROW PER PERSON
--- Revision 2.6: seven sign-off gates. Paste-and-run.
+-- Revision 2.7: Epic PAT_ADDR_CHNG_HX carried as SENSITIVITY ONLY. Paste-and-run.
 -- Feed the CSV to analysis/07_master_cohort_check.py.
 --
 -- WHAT CHANGED AND WHY (each item is a review finding)
@@ -87,6 +87,22 @@
 --     years old (median 16). It does not remove anyone from the residency
 --     uncertainty around D; the maximum is primary D plus every valid
 --     unresolved approved-unplaced person.
+--
+-- REV 2.7 — EPIC / CONNECT CARE ADDRESS HISTORY, SENSITIVITY ONLY
+--   Epic is NOT in the production hierarchy. residency_final and cohort are
+--   unchanged from rev 2.6. Epic feeds only epic_* and cohort_epic_sens, so
+--   the checker can run the source validation (sql/12) checks 3-11 and the
+--   control case against the cohort's real demand dates.
+--   · PHN = identity_id where identity_type_id = '221', digit-validated.
+--   · Rows active on the demand date: eff_start_date <= demand_dt and
+--     (eff_end_date > demand_dt or null). epic_n_active_at_demand counts them.
+--   · If the active rows DISAGREE on Town / catchment / non-Town the verdict
+--     is 'CONFLICT' and nothing is chosen (reviewer instruction 5).
+--   · ZIP_HX through the same postal geography; never CITY_HX.
+--   · Facility = concurrent occupancy >= facility_min_patients; PO Box and
+--     placeholder rows are never classified.
+--   · epic_start_equals_source_max flags a row whose start date is the
+--     source-wide maximum - the load-date signature seen in the sample.
 --
 -- REV 2.6 — SEVEN SIGN-OFF GATES
 --   G1 APPROVAL PRECEDENCE. Two demand anchors are carried side by side:
@@ -519,6 +535,74 @@ strata_historical as (
     where sad.phn is null
     qualify row_number() over (partition by d.phn order by a.eff_from desc) = 1
 ),
+-- ── STEP 6c — EPIC ADDRESS HISTORY (sensitivity only) ─────────────────────
+epic_phn as (
+    select pat_id, digits as phn
+    from (select pat_id, regexp_replace(identity_id::string,'[^0-9]','') as digits
+          from db_source_epic_clarity.raw.identity_id where identity_type_id = '221')
+    where length(digits) = 9 and digits <> '000000000'
+),
+epic_src_max as (select max(eff_start_date::date) as max_start from db_source_epic_clarity.raw.pat_addr_chng_hx),
+epic_addr as (
+    select e.phn,
+           trim(a.addr_hx_line1)                                   as line1,
+           trim(a.city_hx)                                         as city,
+           upper(regexp_replace(a.zip_hx,'[^A-Za-z0-9]',''))       as postal_norm,
+           a.eff_start_date::date                                  as eff_from,
+           a.eff_end_date::date                                    as eff_to,
+           iff(upper(a.addr_hx_line1) like 'PO BOX%' or upper(a.addr_hx_line1) like 'P.O. BOX%'
+               or upper(a.addr_hx_line1) like 'BOX %', 1, 0)        as is_pobox,
+           iff(exists (select 1 from strata_placeholder sp where upper(a.addr_hx_line1) like sp.pat), 1, 0) as is_placeholder
+    from db_source_epic_clarity.raw.pat_addr_chng_hx a
+    join epic_phn e on e.pat_id = a.pat_id
+    where a.addr_hx_line1 is not null or a.zip_hx is not null
+),
+epic_active as (
+    select d.phn, d.demand_dt, a.line1, a.city, a.postal_norm, a.eff_from, a.eff_to, a.is_pobox, a.is_placeholder,
+           iff(a.eff_from = m.max_start, 1, 0)                     as start_equals_source_max,
+           (select count(distinct b.phn) from epic_addr b
+             where upper(b.line1) = upper(a.line1) and b.postal_norm = a.postal_norm
+               and b.eff_from <= d.demand_dt and (b.eff_to > d.demand_dt or b.eff_to is null)) as concurrent_n,
+           case when pc.postalcode is not null and upper(trim(pc.csdname_2021)) = 'COCHRANE'
+                     and upper(trim(pc.csdtype_2021)) = 'T'          then 'Town of Cochrane'
+                when pc.postalcode is not null
+                     and upper(trim(pc.local_name)) = 'COCHRANE | SPRINGBANK' then 'Cochrane catchment'
+                when pc.postalcode is not null                       then 'Not a Cochrane-area resident'
+                when a.postal_norm is not null and left(a.postal_norm,1) <> 'T'
+                                                                     then 'Not a Cochrane-area resident'
+                else 'UNRESOLVED' end                                 as class_raw
+    from demand_in_window d
+    join epic_addr a on a.phn = d.phn
+                    and a.eff_from <= d.demand_dt
+                    and (a.eff_to > d.demand_dt or a.eff_to is null)
+    cross join epic_src_max m
+    left join db_source_ah_postal_code.curated.tb_postal_code pc
+           on upper(regexp_replace(pc.postalcode,'[^A-Za-z0-9]','')) = a.postal_norm
+),
+epic_summary as (
+    select phn,
+           count(*)                                                as n_active,
+           count(distinct class_raw)                               as n_classes,
+           iff(count(distinct class_raw) > 1, 1, 0)                as classes_disagree,
+           max(is_pobox) as any_pobox, max(is_placeholder) as any_placeholder,
+           max(iff(concurrent_n >= (select facility_min_patients from w), 1, 0)) as any_facility,
+           max(start_equals_source_max)                            as any_start_equals_source_max,
+           min(class_raw)                                          as class_if_unanimous
+    from epic_active group by phn
+),
+epic_at_demand as (
+    select ea.*, es.n_active, es.classes_disagree, es.any_pobox, es.any_placeholder, es.any_facility,
+           es.any_start_equals_source_max,
+           -- reviewer instruction 5: never choose between conflicting classes
+           case when es.any_placeholder = 1 then 'NOT USED - placeholder address'
+                when es.any_pobox = 1       then 'NOT USED - PO Box'
+                when es.any_facility = 1    then 'NOT USED - facility address'
+                when es.classes_disagree = 1 then 'CONFLICT - active addresses disagree'
+                else es.class_if_unanimous end                       as epic_residency
+    from epic_active ea join epic_summary es on es.phn = ea.phn
+    qualify row_number() over (partition by ea.phn order by ea.eff_from desc, ea.postal_norm) = 1
+),
+
 -- rule 5 mapping is inside strata_active (same postal geography, never city_name)
 strata_geo as (
     select s.*, s.class_raw as strata_residency_raw from strata_at_demand s
@@ -597,6 +681,18 @@ master as (
                 else sga.class_raw end                                  as strata_residency_alt,
            sh.postal_norm                                      as strata_historical_postal_code,
            sh.years_before_demand                              as strata_historical_years_before_demand,
+           -- EPIC (sensitivity only; never in residency_final or cohort)
+           ep.line1                                            as epic_address_at_demand,
+           ep.city                                             as epic_city_at_demand,
+           ep.postal_norm                                      as epic_zip_at_demand,
+           ep.eff_from                                         as epic_eff_start,
+           ep.n_active                                         as epic_n_active_at_demand,
+           ep.classes_disagree                                 as epic_classes_disagree,
+           ep.any_facility                                     as epic_is_facility,
+           ep.any_pobox                                        as epic_is_pobox,
+           ep.any_placeholder                                  as epic_is_placeholder,
+           ep.any_start_equals_source_max                      as epic_start_equals_source_max,
+           ep.epic_residency,
            -- record validity: an impossible linkage can never take a cohort
            iff(x.death_dt is not null and x.death_dt < d.demand_dt, 0, 1)             as record_valid,
            iff(x.death_dt is not null and x.death_dt < d.demand_dt,
@@ -624,6 +720,7 @@ master as (
     left join strata_geo sg on sg.phn = d.phn
     left join strata_at_demand_alt sga on sga.phn = d.phn
     left join strata_historical sh on sh.phn = d.phn
+    left join epic_at_demand ep on ep.phn = d.phn
 ),
 -- ── G1 — OUTCOME AT THE ALTERNATIVE ANCHOR ─────────────────────────────────
 outcome_alt as (
@@ -650,6 +747,13 @@ master_final as (
                 when m.strata_residency in ('Town of Cochrane','Cochrane catchment',
                                             'Not a Cochrane-area resident')      then m.strata_residency
                 else 'UNRESOLVED' end                                           as residency_final,
+           -- EPIC SENSITIVITY: registry -> Strata -> Epic. Not the production rule.
+           case when m.residency_latest <> 'UNRESOLVED'                          then m.residency_latest
+                when m.strata_residency in ('Town of Cochrane','Cochrane catchment',
+                                            'Not a Cochrane-area resident')      then m.strata_residency
+                when m.epic_residency in ('Town of Cochrane','Cochrane catchment',
+                                          'Not a Cochrane-area resident')        then m.epic_residency
+                else 'UNRESOLVED' end                                           as residency_final_epic_sens,
            -- G1: the same hierarchy at the alternative anchor
            case when m.residency_latest_alt <> 'UNRESOLVED'                      then m.residency_latest_alt
                 when m.strata_residency_alt in ('Town of Cochrane','Cochrane catchment',
@@ -678,6 +782,14 @@ classified as (
                 when residency_final = 'Town of Cochrane' and placed = 1                    then 'C'
                 when residency_final = 'Town of Cochrane' and placed = 0                    then 'D'
                 else null end as cohort,
+           -- EPIC SENSITIVITY cohort. Not the headline.
+           case when in_window = 0 or was_approved = 0 or record_valid = 0 then null
+                when residency_final_epic_sens = 'Town of Cochrane' and first_placement_in_cochrane = 1 then 'A'
+                when residency_final_epic_sens in ('Not a Cochrane-area resident','Cochrane catchment')
+                     and first_placement_in_cochrane = 1                                          then 'B'
+                when residency_final_epic_sens = 'Town of Cochrane' and placed = 1                 then 'C'
+                when residency_final_epic_sens = 'Town of Cochrane' and placed = 0                 then 'D'
+                else null end as cohort_epic_sens,
            -- the same rule on registry alone, so Strata's effect is visible
            case when in_window = 0 or was_approved = 0 or record_valid = 0 then null
                 when residency_latest = 'Town of Cochrane' and first_placement_in_cochrane = 1 then 'A'
