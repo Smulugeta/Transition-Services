@@ -276,16 +276,30 @@ Expect the remaining count to fall to about 9.
   and 5 and carries Epic address history as sensitivity only. Sign-off on
   89 / 148 / 192 / 69 waits on the gate-1 sensitivity. `sql/11` blocks A1, A2,
   E, G and `sql/12` blocks 1, 2, 7 and the control are to be reported back.
-- **Epic is not in the hierarchy.** The sample's `EFF_START_DATE` values are
-  all 2026-09-01, which looks like a load date; if `sql/12` block 2 confirms
-  it, Epic cannot place anyone at a 2021–2025 demand date and stays out.
+- **Epic is not in the hierarchy.** An early suspicion that `EFF_START_DATE`
+  was a load date — every row in a sample of recent rows started 2026-09-01 —
+  was **wrong**; block 2 shows real event dates (below).
 - **Epic check 1, run 2026-09-02:** under `identity_type_id = 221`,
   **9,384,709 rows = 9,384,709 distinct patients, all exactly 9 digits, zero
   all-zero placeholders.** One identity per patient, no padding or
   truncation risk, and a population-scale count consistent with the
   provincial PHN/ULI. Still to confirm: no PHN held by more than one patient
   (the uniqueness-both-ways statement), cohort coverage (0c), and the
-  start-date question (block 2). The checker rev 4 already
+  start-date question (block 2).
+- **Epic check 1 closed:** uniqueness both ways is 0 and 0 — no patient with
+  two PHNs, no PHN held by two patients.
+- **Epic check 2 answered, run 2026-09-02:** 27,410,304 rows; **92.8% start
+  before 2026; 43.4% (11.9M) start before the window**; only 3 rows carry the
+  source-wide maximum date. `EFF_START_DATE` is a real event date and Epic
+  addresses can be active on 2021–2025 demand dates. Caveat: the two largest
+  single start dates are **2019-08-16 and 2019-08-17 — 4.7M rows, 17% of the
+  table — the Connect Care initial conversion.** Those addresses were carried
+  over from legacy systems; an open-ended one is "active" on every later
+  demand date while reflecting wherever the person lived in 2019 or earlier.
+  Rev 2.7 flags them (`epic_start_is_migration_date`) and the checker reports
+  how many Epic resolutions rest on one. A further cluster of starts across
+  Oct 2019–Mar 2020 matches first visits after wave-1 go-live. Zero-length
+  and address-less rows are a small minority. The checker rev 4 already
   applies the rev 2.4 rules to the rev 2.3 extract, which is where the figures
   above come from. 35 people are left-truncated in the full universe, none in
   any cohort.

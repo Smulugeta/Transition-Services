@@ -101,8 +101,15 @@
 --   · ZIP_HX through the same postal geography; never CITY_HX.
 --   · Facility = concurrent occupancy >= facility_min_patients; PO Box and
 --     placeholder rows are never classified.
---   · epic_start_equals_source_max flags a row whose start date is the
---     source-wide maximum - the load-date signature seen in the sample.
+--   · epic_start_is_migration_date flags a row that started 2019-08-16 or
+--     2019-08-17 - the Connect Care initial conversion, 4.7M rows, 17% of the
+--     table. Such an address was carried over from a legacy system; its
+--     start is the migration date, and an open-ended one is "active" on
+--     every later demand date while reflecting wherever the person lived in
+--     2019 or before. Reported, like the Strata creation-date flag; not a
+--     rejection. (The earlier load-date suspicion from a sample of recent
+--     rows was wrong: only 3 rows carry the source-wide maximum date and 43%
+--     of rows start before the window.)
 --
 -- REV 2.6 — SEVEN SIGN-OFF GATES
 --   G1 APPROVAL PRECEDENCE. Two demand anchors are carried side by side:
@@ -560,6 +567,7 @@ epic_addr as (
 epic_active as (
     select d.phn, d.demand_dt, a.line1, a.city, a.postal_norm, a.eff_from, a.eff_to, a.is_pobox, a.is_placeholder,
            iff(a.eff_from = m.max_start, 1, 0)                     as start_equals_source_max,
+           iff(a.eff_from in ('2019-08-16'::date, '2019-08-17'::date), 1, 0) as start_is_migration_date,
            (select count(distinct b.phn) from epic_addr b
              where upper(b.line1) = upper(a.line1) and b.postal_norm = a.postal_norm
                and b.eff_from <= d.demand_dt and (b.eff_to > d.demand_dt or b.eff_to is null)) as concurrent_n,
@@ -587,12 +595,13 @@ epic_summary as (
            max(is_pobox) as any_pobox, max(is_placeholder) as any_placeholder,
            max(iff(concurrent_n >= (select facility_min_patients from w), 1, 0)) as any_facility,
            max(start_equals_source_max)                            as any_start_equals_source_max,
+           max(start_is_migration_date)                            as any_start_is_migration_date,
            min(class_raw)                                          as class_if_unanimous
     from epic_active group by phn
 ),
 epic_at_demand as (
     select ea.*, es.n_active, es.classes_disagree, es.any_pobox, es.any_placeholder, es.any_facility,
-           es.any_start_equals_source_max,
+           es.any_start_equals_source_max, es.any_start_is_migration_date,
            -- reviewer instruction 5: never choose between conflicting classes
            case when es.any_placeholder = 1 then 'NOT USED - placeholder address'
                 when es.any_pobox = 1       then 'NOT USED - PO Box'
@@ -692,6 +701,7 @@ master as (
            ep.any_pobox                                        as epic_is_pobox,
            ep.any_placeholder                                  as epic_is_placeholder,
            ep.any_start_equals_source_max                      as epic_start_equals_source_max,
+           ep.any_start_is_migration_date                      as epic_start_is_migration_date,
            ep.epic_residency,
            -- record validity: an impossible linkage can never take a cohort
            iff(x.death_dt is not null and x.death_dt < d.demand_dt, 0, 1)             as record_valid,

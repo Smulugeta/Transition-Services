@@ -362,11 +362,12 @@ def epic(rows):
     n_act = Counter(min(int(col(r,"EPIC_N_ACTIVE_AT_DEMAND","0") or 0), 3) for r in inw)
     print(f"   checks 3-4 — Epic addresses ACTIVE on the demand date, {len(inw):,} approved people:")
     print(f"     zero {n_act[0]:,} ({pct(n_act[0],len(inw)).strip()})   exactly one {n_act[1]:,}   two {n_act[2]:,}   three or more {n_act[3]:,}")
-    ld = sum(1 for r in inw if col(r,"EPIC_START_EQUALS_SOURCE_MAX","0")=="1")
-    print(f"     active rows whose start date equals the SOURCE-WIDE MAXIMUM start date: {ld:,}")
+    mig = sum(1 for r in inw if col(r,"EPIC_START_IS_MIGRATION_DATE","0")=="1")
+    ld  = sum(1 for r in inw if col(r,"EPIC_START_EQUALS_SOURCE_MAX","0")=="1")
+    print(f"     active rows that started on the 2019-08-16/17 CONVERSION dates (legacy carry-over; may be stale): {mig:,}")
+    print(f"     active rows whose start equals the source-wide maximum date: {ld:,}")
     if n_act[0] > 0.9*len(inw):
-        print("     -> over 90% have NO Epic address active at demand. Consistent with EFF_START_DATE being a")
-        print("        load date (every sample row started 2026-09-01): Epic cannot place anyone in 2021-2025.")
+        print("     -> over 90% have NO Epic address active at demand: coverage, not dates, is the limit here.")
     multi = [r for r in inw if int(col(r,"EPIC_N_ACTIVE_AT_DEMAND","0") or 0) > 1]
     dis = [r for r in multi if col(r,"EPIC_CLASSES_DISAGREE","0")=="1"]
     print(f"   check 5 — of {len(multi):,} with multiple actives, class CONFLICT (not chosen): {len(dis):,}")
