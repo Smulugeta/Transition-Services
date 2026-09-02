@@ -1,14 +1,15 @@
 # Master cohort — runs of 2026-09-02
 
-Output of `sql/09_master_cohort_standalone.sql` **rev 2.3** (full audit
-universe, 33,003 people), validated by `analysis/07_master_cohort_check.py`
-**rev 4**, which applies the fourth-review rules. **All fourteen integrity
-checks pass.** That is a data-integrity result, not a methodological sign-off.
+Output of `sql/09_master_cohort_standalone.sql` **rev 2.5** (full audit
+universe, 33,002 people, Strata `address_h` as secondary residency source),
+validated by `analysis/07_master_cohort_check.py` **rev 5**. **All eighteen
+integrity checks pass**, including the five that enforce the Strata rules.
+That is a data-integrity result, not a methodological sign-off.
 
-Three runs — rev 2.1 (1,139 rows), rev 2.2 (653), rev 2.3 (33,003) — give the
-same primary A/B/C/D. The checker recomputes every cohort from residency ×
-placement × location and compares it with the SQL's own column; the two agree
-for all 33,003 people.
+Runs so far: rev 2.1 (1,139 rows), 2.2 (653), 2.3 (33,003), 2.5 (33,002 — the
+all-zero PHN is now rejected). The checker recomputes every cohort from
+residency × placement × location and compares it with the SQL's own column;
+the two agree for all 33,002 people.
 
 ## Reviewer decisions adopted (third review)
 
@@ -55,16 +56,19 @@ for all 33,003 people.
 
 ## The four cohorts
 
-| Cohort | | **Primary** (latest address) | | Sensitivity (any-3-year) | |
+| Cohort | | **Primary** (registry latest address, else Strata at demand) | | Sensitivity (any-3-year, registry only) | |
 |---|---|---|---|---|---|
-| A | resident, placed in Cochrane | **87** | 25.1% | 90 | 24.2% |
-| C | resident, placed outside | **191** | 55.2% | 208 | 55.9% |
-| D | resident, no placement in source by 2026-03-31 | **68** | 19.7% | 74 | 19.9% |
-| | **resident demand A + C + D** | **346** | | 372 | |
-| B | **non-Town** resident, placed in Cochrane | **143** | | 140 | |
+| A | resident, placed in Cochrane | **89** | 25.4% | 90 | 24.2% |
+| C | resident, placed outside | **192** | 54.9% | 208 | 55.9% |
+| D | resident, no placement in source by 2026-03-31 | **69** | 19.7% | 74 | 19.9% |
+| | **resident demand A + C + D** | **350** | | 372 | |
+| B | **non-Town** resident, placed in Cochrane | **148** | | 140 | |
 | | of which Cochrane catchment | 6 | | | |
 | — | Cochrane placement, residency unresolved (own category) | 9 | | | |
-| | **A + B — every Cochrane placement with known residency** | **230** | | | |
+| | **A + B — every Cochrane placement with known residency** | **237** | | | |
+
+Registry-only (rev 2.4 rule, before Strata): A 87 · B 143 · C 191 · D 68 ·
+resident demand 346. Strata moves A +2, B +5, C +1, D +1.
 
 The two rules differ for 37 of 653 people, all in one direction — 24 Town → not
 a resident, 11 catchment → not a resident, 2 Town → catchment. Nobody moves
@@ -74,51 +78,77 @@ into Town. The D share is 19.7% against 19.9%; the story does not change.
 
 | | People | Share of D |
 |---|---|---|
-| D1 still on the list at follow-up | 12 | 17.6% |
-| D2 died before any placement | 25 | 36.8% |
-| D3 exited, no placement observed in source | 31 | 45.6% |
+| D1 still on the list at follow-up | 13 | 18.8% |
+| D2 died before any placement | 25 | 36.2% |
+| D3 exited, no placement observed in source | 31 | 44.9% |
 
-- 7 people in D were placed **after** 2026-03-31 (sensitivity only).
+- 8 people in D were placed **after** 2026-03-31 (sensitivity only).
 - 1 person in D received a Level 3 bed instead of the Type A/B bed approved.
-- D1 sits almost entirely in FY2026 (9 of 12) — censoring, not a trend.
+- D1 sits almost entirely in FY2026 (10 of 13) — censoring, not a trend.
+- The one person Strata added to D lives at a private Cochrane address
+  (River Heights, T4C 0J3) effective five weeks before their demand event.
 
 ### By fiscal year of demand event — primary
 
 | FYE | A | C | D1 | D2 | D3 |
 |---|---|---|---|---|---|
 | 2022 | 20 | 27 | 0 | 7 | 5 |
-| 2023 | 23 | 45 | 0 | 10 | 5 |
+| 2023 | 24 | 45 | 0 | 10 | 5 |
 | 2024 | 18 | 47 | 1 | 5 | 6 |
-| 2025 | 16 | 44 | 2 | 3 | 9 |
-| 2026 | 10 | 28 | 9 | 0 | 6 |
+| 2025 | 17 | 45 | 2 | 3 | 9 |
+| 2026 | 10 | 28 | 10 | 0 | 6 |
 
 ### Days from approval to first placement — primary, placed only
 
 | | n | median | p90 |
 |---|---|---|---|
-| A | 87 | 39 | 364 |
-| B | 137 | 31 | 361 |
-| C | 191 | 21 | 304 |
+| A | 89 | 39 | 364 |
+| B | 148 | 34 | 375 |
+| C | 192 | 21 | 304 |
 
-## Residency uncertainty around D — full universe, no request-based gate
+## Strata `address_h` as secondary residency source — rule 10
 
-Why a request gate is wrong, from this data: only **190 of 346 (54.9%)** of
+Gated on `sql/11`; the join is through every distinct (patient, address
+record) pair in `patient_h`, and the address used is the version effective on
+the demand date, mapped through the same postal geography as the registry.
+
+| | |
+|---|---|
+| Previously unresolved on the registry | 524 |
+| **Resolved by Strata** | **430** — 423 not Cochrane · 4 Town · 3 catchment |
+| of those, approved and unplaced | 98 — 97 not Cochrane · 1 Town |
+| Remaining unresolved | 94 |
+
+Why the 94 stayed unresolved (disjoint): 48 had a **facility** address at
+demand (shared by 3+ people — 150 Scotia Landing NW at 64 people, 300 Prince
+of Peace Way at 16, an "NWT Evacuee" placeholder) and were not classified; 40
+had an address at demand with no postal code; 5 had no Strata address row; 1
+had an Alberta code that fails the geography lookup. Nobody fell under rule 9
+(older address only).
+
+Of the 430 resolutions, **107 rest on an out-of-province postal code** (the
+reviewer's Surrey example is one) and **229 have an effective-from equal to
+the patient record's creation date** — the address was current *at least*
+from then. All 7 resolutions to Cochrane or its catchment are private homes,
+each shared by exactly one person; no facility slipped under the threshold.
+
+## Residency uncertainty around D — after registry and Strata
+
+Why a request gate is wrong, from this data: only **193 of 350 (55.1%)** of
 known Town demand ever recorded a Cochrane request; among those actually
-placed, **141 of 278 (50.7%)**. Absence of a request says nothing about
-residency and must not narrow the pool. Rev 2.2's gate is withdrawn; rev 2.3
-returns everyone.
+placed, **143 of 281 (50.9%)**.
 
-Unresolved on the primary rule, approved, unplaced, **province-wide: 114**,
-of which **113 are valid records** (one is the all-zero PHN). 57 have no
-registry record; 56 have a registry record but no year in the lookback.
+Unresolved after both sources, approved, unplaced: **15** (8 registry record
+with no year in the lookback, 7 no registry record; 3 have a 8–20-year-old
+non-Cochrane fallback address, reported as evidence only).
 
 | | D |
 |---|---|
-| **Primary** | **68** |
-| **Mathematical maximum** — primary + every valid unresolved person counted as Town | **181** |
+| **Primary** | **69** |
+| **Mathematical maximum** — primary + every valid unresolved person counted as Town | **84** |
 
-The maximum is deliberately extreme and is **not an estimate**. Nothing
-reduces it: not the fallback, not a proportional allocation.
+Registry-only the same maximum was 181. The maximum is still deliberately
+extreme and **not an estimate**; nothing reduces it.
 
 `residency_fallback` — the latest mapped address before the demand event at
 any distance — is reported as **historical evidence only**. Among the 113, it
@@ -142,12 +172,13 @@ nothing is summarised by hand.
 
 | published \ master | A | B | C | D | none | absent | TOTAL |
 |---|---|---|---|---|---|---|---|
-| A | 87 | 5 | 0 | 0 | 3 | 2 | 97 |
-| B | 0 | 132 | 0 | 0 | 7 | 5 | 144 |
-| C | 0 | 0 | 191 | 0 | 18 | 11 | 220 |
-| **TOTAL** | 87 | 137 | 191 | 0 | 28 | 18 | **461** |
+| A | 89 | 6 | 0 | 0 | 0 | 2 | 97 |
+| B | 0 | 137 | 0 | 0 | 2 | 5 | 144 |
+| C | 0 | 0 | 192 | 0 | 17 | 11 | 220 |
+| **TOTAL** | 89 | 143 | 192 | 0 | 19 | 18 | **461** |
 
-**Kept cohort 410 of 461; changed or absent 51.** On the sensitivity rule the
+**Kept cohort 418 of 461; changed or absent 43** (registry-only rev 2.4 rule:
+410 and 51 — Strata resolved 8 of the "none" cells). On the sensitivity rule the
 same matrix keeps 428 of 461 with 33 changed — the reviewer's arithmetic; an
 earlier message's "428 of 459, 31" was a miscount.
 
@@ -157,16 +188,14 @@ Every off-diagonal cell, with its reason from the extract:
 |---|---|---|
 | C → none | 15 | latest address not Cochrane (any-3-year said Town) — the residency-rule change |
 | C → absent | 11 | not in master: approval before the window, or already in residential care at the demand event |
-| B → none | 6 | unresolved at the earlier anchor (registry record, no year in lookback) |
 | B → absent | 5 | not in master, as above |
 | A → B | 3 | latest address not Cochrane (any-3-year said Town) |
-| A → B | 2 | not Cochrane under both rules at the earlier anchor |
 | A → absent | 2 | not in master, as above |
-| A → none | 2 | unresolved at the earlier anchor |
-| C → none | 2 | unresolved at the earlier anchor |
+| B → none | 2 | still unresolved after registry and Strata |
+| A → B | 2 | not Cochrane under both rules at the earlier anchor |
 | C → none | 1 | now Cochrane catchment |
-| B → none | 1 | unresolved (no registry record) |
-| A → none | 1 | now Cochrane catchment |
+| C → none | 1 | still unresolved after registry and Strata |
+| A → B | 1 | now Cochrane catchment (B under the non-Town rule) |
 
 **Correction from the rev 2.3 run.** The rev 2.2 extract showed 19 absent and
 I attributed all 19 to pre-window approvals. One of them was a filter
@@ -181,20 +210,22 @@ universe must not be filtered.
 
 - Cohort D is **measurable, reconciled, reproducible on two runs, and not
   signed off.**
-- Primary figures: **A 87 · B 143 · C 191 · D 68 (12 / 25 / 31)**; resident
-  demand 346; sensitivity 372. Reviewer status after the fourth pass: A, C and
-  resident demand accepted under the latest-residence definition; D
-  mechanically validated with the source-coverage wording mandatory; B
-  resolved at 143 on the reviewer's recommendation, pending the consultant's
-  confirmation that B means non-Town.
+- Primary figures with Strata: **A 89 · B 148 · C 192 · D 69 (13 / 25 / 31)**;
+  resident demand 350; sensitivity 372. Registry-only: 87 / 143 / 191 / 68 =
+  346. Reviewer status after the fourth pass (registry-only figures): A, C and
+  resident demand accepted; D validated with the source-coverage wording
+  mandatory; B at 143 on the reviewer's recommendation pending the
+  consultant's confirmation. The Strata increments (+2 / +5 / +1 / +1) are new
+  and need the reviewer's pass.
 - Nothing here goes into the report until the reviewer clears it, and every D
   figure carries "no Type A/B placement observed in the Calgary/Edmonton
   Strata placement source by 31 March 2026".
-- Rev 2.3 has been run; rev 2.4 (PHN validity, record_valid, the B rule,
-  residency_evidence) and rev 2.5 (Strata `address_h` as a secondary residency
-  source, gated on `sql/11`) are written and not yet run. Rev 2.5 will change
-  the unresolved pool and possibly A/B/C/D; the checker's rule-10 block reports
-  exactly what moved and why. The checker rev 4 already
+- Rev 2.5 has been run (it includes the rev 2.4 rules). One death-before-
+  demand record remains in the universe, flagged `record_valid = 0`, in no
+  cohort. **`sql/11` blocks A and D have not been reported back**; until block
+  A shows whether anyone holds more than one address record, and block D shows
+  the Surrey row for PHN 49833-8261, the Strata increments rest on the sample
+  evidence only. The checker rev 4 already
   applies the rev 2.4 rules to the rev 2.3 extract, which is where the figures
   above come from. 35 people are left-truncated in the full universe, none in
   any cohort.

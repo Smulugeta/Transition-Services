@@ -214,20 +214,24 @@ def strata(rows):
     unp = [r for r in prev if r["_app"] and not r["_pl"] and r["_valid"]]
     still = [r for r in unp if r["_src"]!="STRATA_ADDRESS_H"]
     print(f"\n   unresolved+approved+unplaced: before {len(unp):,}  after {len(still):,}   -> maximum on D falls from {cR['D']+len(unp):,} to {cF['D']+len(still):,}")
-    # why the rest stayed unresolved, and the guards
-    fac = sum(1 for r in prev if col(r,"STRATA_ADDRESS_IS_FACILITY","0")=="1")
-    hist = sum(1 for r in prev if r["_src"]!="STRATA_ADDRESS_H" and col(r,"STRATA_HISTORICAL_POSTAL_CODE"))
-    noaddr = sum(1 for r in prev if not col(r,"STRATA_ADDRESS_AT_DEMAND") and not col(r,"STRATA_HISTORICAL_POSTAL_CODE"))
-    unmT = sum(1 for r in prev if r["_strat"]==UNRES)
-    print(f"\n   guards among the previously unresolved:")
-    print(f"     Strata address active at demand but it is a FACILITY (shared by 3+ people) — not used: {fac:,}")
-    print(f"     Alberta postal code that fails the geography lookup — stays unresolved:               {unmT:,}")
-    print(f"     no address active at demand; older address only (rule 9, reported not classified):   {hist:,}")
-    if hist:
-        ys = sorted(int(col(r,"STRATA_HISTORICAL_YEARS_BEFORE_DEMAND")) for r in prev
-                    if r["_src"]!="STRATA_ADDRESS_H" and col(r,"STRATA_HISTORICAL_YEARS_BEFORE_DEMAND"))
-        if ys: print(f"       staleness: {min(ys)}-{max(ys)} years before demand, median {st.median(ys)}")
-    print(f"     no Strata address at all:                                                           {noaddr:,}")
+    # why the rest stayed unresolved — four DISJOINT classes that must sum to the remainder
+    rem = [r for r in prev if r["_src"]!="STRATA_ADDRESS_H"]
+    def cls(r):
+        if col(r,"STRATA_ADDRESS_IS_FACILITY","0")=="1":            return "facility address at demand (shared by 3+ people) — not used"
+        if r["_strat"]==UNRES and col(r,"STRATA_POSTAL_CODE_AT_DEMAND"): return "Alberta postal code at demand fails the geography lookup"
+        if r["_strat"]==UNRES:                                        return "address at demand but no postal code"
+        if col(r,"STRATA_HISTORICAL_POSTAL_CODE"):                    return "no address active at demand; older address only (rule 9)"
+        return "no Strata address row at all"
+    part = Counter(cls(r) for r in rem)
+    print(f"\n   why {len(rem):,} stayed unresolved (disjoint; sums to {sum(part.values()):,}):")
+    for k, v in part.most_common(): print(f"     {k:66s} {v:5,}")
+    ys = sorted(int(col(r,"STRATA_HISTORICAL_YEARS_BEFORE_DEMAND")) for r in rem if cls(r).startswith("no address active"))
+    if ys: print(f"       rule-9 staleness: {min(ys)}-{max(ys)} years before demand, median {st.median(ys)}")
+    # the Cochrane resolutions must be private homes, never a facility under the threshold
+    coch = [r for r in res if r["_resFin"] in (TOWN, AREA)]
+    if coch:
+        sb = Counter(col(r,"STRATA_ADDRESS_SHARED_BY_N") for r in coch)
+        print(f"   Strata resolutions TO Cochrane/catchment: {len(coch):,}; address shared by N people: {dict(sb)}  (all must be 1)")
     oop = sum(1 for r in res if col(r,"STRATA_POSTAL_CODE_AT_DEMAND") and not col(r,"STRATA_POSTAL_CODE_AT_DEMAND").startswith("T"))
     cre = sum(1 for r in res if col(r,"STRATA_FROM_EQUALS_CREATION","0")=="1")
     print(f"   of the {len(res):,} Strata resolutions: out-of-province postal code {oop:,}; effective_from equals record creation date {cre:,}\n")
