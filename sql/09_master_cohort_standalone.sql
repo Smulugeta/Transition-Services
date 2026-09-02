@@ -1,6 +1,6 @@
 -- ============================================================================
 -- MASTER DEMAND COHORT — A / B / C / D — STANDALONE, ONE ROW PER PERSON
--- Revision 2.5: Strata address history as a SECONDARY residency source. Paste-and-run.
+-- Revision 2.6: seven sign-off gates. Paste-and-run.
 -- Feed the CSV to analysis/07_master_cohort_check.py.
 --
 -- WHAT CHANGED AND WHY (each item is a review finding)
@@ -88,6 +88,33 @@
 --     uncertainty around D; the maximum is primary D plus every valid
 --     unresolved approved-unplaced person.
 --
+-- REV 2.6 — SEVEN SIGN-OFF GATES
+--   G1 APPROVAL PRECEDENCE. Two demand anchors are carried side by side:
+--      demand_dt      = min over rows of coalesce(assess, calculated)   (current)
+--      demand_dt_alt  = coalesce(min(assess), min(calculated)) per person
+--      The universe admits anyone in the window under EITHER anchor, with
+--      in_window / in_window_alt flags. Residency, Strata and the cohort are
+--      computed at BOTH anchors (…_alt columns) so the checker can report the
+--      exact impact. On a 792-person extract the alt anchor moved 1% of dates,
+--      never earlier.
+--   G2 ACTIVE ADDRESSES AT DEMAND. strata_n_active_at_demand counts Strata
+--      versions active on the demand date; strata_active_classes_disagree says
+--      whether they map to different Town / catchment / non-Town classes, i.e.
+--      whether the latest-effective_from tiebreak could matter.
+--   G4 FACILITY GUARD IS NOW CONCURRENT OCCUPANCY. "Ever shared by 3+" over
+--      decades of address history blocked apartment units with three
+--      successive tenants (403-18 Hebert Road, 353-5149 Mullen Road). A
+--      facility is now an address with facility_min_patients or more DISTINCT
+--      PEOPLE HOLDING IT ON THE SAME DAY (the demand date). Placeholder
+--      strings (NO FIXED ADDRESS, NWT EVACUEE, UNKNOWN …) are a separate
+--      class and never classified. A facility reference table would be
+--      better than any threshold; query 11 block E lists candidates for one.
+--   G5 RAW PHN VALIDATION BEFORE LPAD. Snowflake LPAD(x, 9) TRUNCATES a
+--      string longer than 9 — a 10-digit identifier silently became its first
+--      nine digits. Digits are counted first; only exactly-9-digit
+--      identifiers are accepted, in the patient, waitlist and death paths.
+--   G6 Registry fallback stays historical evidence only.  G7 B = non-Town.
+--
 -- REV 2.5 — STRATA address_h AS A SECONDARY RESIDENCY SOURCE
 -- Rules as specified, with three additions the data forced:
 --   1. Registry is primary and is never overwritten.
@@ -173,14 +200,13 @@ w as (
 ),
 
 -- ── STEP 1 — PHN ───────────────────────────────────────────────────────────
+-- G5: count digits BEFORE padding. lpad(x,9) truncates anything longer.
 pat_key as (
-    select patient_id, iff(phn_raw is null or phn_raw = '000000000' or length(phn_raw) <> 9, null, phn_raw) as phn
-    from (
-        select p.id as patient_id,
-               case when regexp_replace(p.identifier1::string,'[^0-9]','') = '' then null
-                    else lpad(regexp_replace(p.identifier1::string,'[^0-9]',''),9,'0') end as phn_raw
-        from db_source_strata_health_pathways.raw.patient p
-    )
+    select patient_id,
+           iff(length(digits) = 9 and digits <> '000000000', digits, null) as phn,
+           length(digits)                                                   as phn_raw_digits
+    from (select p.id as patient_id, regexp_replace(p.identifier1::string,'[^0-9]','') as digits
+          from db_source_strata_health_pathways.raw.patient p)
 ),
 
 -- ── STEP 2 — ADMISSIONS, ANY DATE ──────────────────────────────────────────
@@ -213,12 +239,14 @@ adm_rep as (                          -- REPORTING scope
 
 -- ── STEP 3 — WAITLIST: APPROVAL DATE, FIRST APPEARANCE, LAST DAY ON LIST ───
 wl as (
-    select phn, census_date, approved_dt, current_location, rated_cochrane
+    select phn, census_date, approved_dt, assess_dt, calc_dt, current_location, rated_cochrane
     from (
-    select lpad(regexp_replace(t.phn::string,'[^0-9]',''),9,'0') as phn,
+    select regexp_replace(t.phn::string,'[^0-9]','')            as phn,      -- G5: no lpad
            t.census_date::date                                   as census_date,
            coalesce(t.assess_approved_date,
-                    t.calculated_assess_approved_date)::date     as approved_dt,
+                    t.calculated_assess_approved_date)::date     as approved_dt,   -- row-level (current)
+           t.assess_approved_date::date                          as assess_dt,     -- G1
+           t.calculated_assess_approved_date::date               as calc_dt,       -- G1
            t.current_location,
            iff(t.service_provider_rated_site ilike '%cochrane%'
                or t.service_provider_rated_site ilike '%hawthorne%', 1, 0) as rated_cochrane
@@ -228,13 +256,14 @@ wl as (
     where t.census_date >= w.win_start and t.census_date < w.win_end
       and t.phn is not null
     )
-    where phn <> '000000000' and length(phn) = 9 and regexp_replace(phn,'[^0-9]','') = phn
+    where length(phn) = 9 and phn <> '000000000'          -- G5: exactly nine digits, no padding
 ),
 census_bounds as (select min(census_date) as first_dt, max(census_date) as last_dt from wl),
 first_list as (
     select l.phn,
            min(l.census_date)                          as first_list_appearance,
-           min(l.approved_dt)                          as first_approval_dt,
+           min(l.approved_dt)                          as first_approval_dt,        -- current: min of row-level coalesce
+           coalesce(min(l.assess_dt), min(l.calc_dt))  as first_approval_dt_alt,    -- G1: person-level coalesce
            min_by(l.current_location, l.census_date)   as setting_at_list_entry,
            max(l.census_date)                          as last_seen_on_list,
            iff(max(l.census_date) = cb.last_dt, 1, 0)  as on_list_at_followup,   -- D1
@@ -252,6 +281,9 @@ demand as (
     select coalesce(l.phn, a.phn)                                          as phn,
            least(coalesce(l.first_approval_dt, '9999-12-31'::date),
                  coalesce(a.first_rep_adm,     '9999-12-31'::date))         as demand_dt,
+           least(coalesce(l.first_approval_dt_alt, '9999-12-31'::date),
+                 coalesce(a.first_rep_adm,         '9999-12-31'::date))     as demand_dt_alt,     -- G1
+           l.first_approval_dt_alt,
            iff(l.first_approval_dt is not null
                and (a.first_rep_adm is null or l.first_approval_dt <= a.first_rep_adm),
                'approval', 'admission')                                    as demand_event_type,
@@ -271,14 +303,17 @@ demand as (
 ),
 demand_in_window as (
     select d.*,
-           iff(month(d.demand_dt) >= 4, year(d.demand_dt) + 1, year(d.demand_dt)) as demand_fye
+           iff(month(d.demand_dt) >= 4, year(d.demand_dt) + 1, year(d.demand_dt))         as demand_fye,
+           iff(month(d.demand_dt_alt) >= 4, year(d.demand_dt_alt) + 1, year(d.demand_dt_alt)) as demand_fye_alt,
+           -- G1: membership under each anchor. The universe admits EITHER.
+           iff(d.demand_dt >= w.win_start and d.demand_dt < w.win_end
+               and (d.first_residential_ever is null or d.first_residential_ever >= d.demand_dt), 1, 0) as in_window,
+           iff(d.demand_dt_alt >= w.win_start and d.demand_dt_alt < w.win_end
+               and (d.first_residential_ever is null or d.first_residential_ever >= d.demand_dt_alt), 1, 0) as in_window_alt
     from demand d cross join w
-    where d.demand_dt >= w.win_start and d.demand_dt < w.win_end
-      -- ALREADY IN RESIDENTIAL CARE WHEN THE DEMAND EVENT HAPPENED. Tested
-      -- against the demand event, not the window start (rev 2.3). Equality is
-      -- allowed: when the demand event IS the first residential admission the
-      -- two dates coincide and that is new demand.
-      and (d.first_residential_ever is null or d.first_residential_ever >= d.demand_dt)
+    -- ALREADY IN RESIDENTIAL CARE WHEN THE DEMAND EVENT HAPPENED is inside
+    -- each in_window flag (rev 2.3 rule, tested against the demand event).
+    qualify in_window = 1 or in_window_alt = 1
 ),
 
 -- ── STEP 5 — RESIDENCY, TWO METHODS, MISSINGNESS SPLIT ─────────────────────
@@ -296,9 +331,10 @@ geo as (
     left join db_source_ah_postal_code.curated.tb_postal_code pc on pc.postalcode = r.postal_cd
 ),
 res_rows as (
-    select d.phn, d.demand_fye, g.fye, g.postal_cd, g.mapped, g.in_town, g.in_area,
-           iff(g.fye between d.demand_fye-3 and d.demand_fye-1, 1, 0) as in_window,
-           iff(g.fye <= d.demand_fye-1, 1, 0)                          as pre_demand
+    select d.phn, d.demand_fye, d.demand_fye_alt, g.fye, g.postal_cd, g.mapped, g.in_town, g.in_area,
+           iff(g.fye between d.demand_fye-3 and d.demand_fye-1, 1, 0)         as in_window,
+           iff(g.fye <= d.demand_fye-1, 1, 0)                                  as pre_demand,
+           iff(g.fye between d.demand_fye_alt-3 and d.demand_fye_alt-1, 1, 0) as in_window_alt   -- G1
     from demand_in_window d
     left join geo g on g.phn = d.phn
 ),
@@ -324,7 +360,11 @@ residency as (
            count_if(pre_demand=1 and mapped=1)                          as n_predemand_mapped,
            max_by(in_town, iff(pre_demand=1 and mapped=1, fye, null))   as town_fallback,
            max_by(in_area, iff(pre_demand=1 and mapped=1, fye, null))   as area_fallback,
-           max(iff(pre_demand=1 and mapped=1, fye, null))               as fallback_fye
+           max(iff(pre_demand=1 and mapped=1, fye, null))               as fallback_fye,
+           -- G1: the same latest-address rule at the alternative anchor
+           count_if(in_window_alt=1 and mapped=1)                       as n_window_mapped_alt,
+           max_by(in_town, iff(in_window_alt=1 and mapped=1, fye, null)) as town_latest_alt,
+           max_by(in_area, iff(in_window_alt=1 and mapped=1, fye, null)) as area_latest_alt
     from res_rows
     group by phn
 ),
@@ -365,9 +405,9 @@ level3_after as (
 ),
 deaths as (
     select phn, min(death_dt) as death_dt from (
-        select lpad(regexp_replace(stkh_num_1::string,'[^0-9]',''),9,'0') as phn, dethdate::date as death_dt
+        select regexp_replace(stkh_num_1::string,'[^0-9]','') as phn, dethdate::date as death_dt   -- G5: no lpad
         from db_source_ah_vital_stats.curated.tb_vital_stats_deaths_adhoc
-    ) where phn <> '000000000' and length(phn) = 9
+    ) where length(phn) = 9 and phn <> '000000000'
     group by 1
 ),
 
@@ -396,21 +436,77 @@ strata_addr as (
           from db_source_strata_health_pathways.raw.address_h) ah on ah.id = ph.address_id
     where k.phn is not null
 ),
--- ADDITION B: how many distinct people share each address version
+-- ever-shared count kept for reporting only (was the guard before rev 2.6)
 strata_shared as (
     select upper(street_address) as street_u, postal_norm, count(distinct phn) as n_patients
     from strata_addr group by 1,2
 ),
--- the version ACTIVE ON the demand date (rules 3, 4, 8)
-strata_at_demand as (
-    select d.phn, a.street_address, a.city_name, a.postal_norm, a.eff_from, a.eff_to, a.created,
-           sh.n_patients                                            as shared_by_n,
-           iff(a.eff_from = a.created, 1, 0)                        as from_equals_creation
+-- G4: placeholder strings are never an address
+strata_placeholder (pat) as (
+    select * from values ('%NO FIXED%'),('%NFA%'),('%EVACUEE%'),('%UNKNOWN%'),('%HOMELESS%'),('%SHELTER%'),('%TRANSIENT%')
+),
+-- all versions ACTIVE on the demand date (rules 3, 8), one row per version
+strata_active as (
+    select d.phn, d.demand_dt, a.street_address, a.city_name, a.postal_norm, a.eff_from, a.eff_to, a.created,
+           iff(exists (select 1 from strata_placeholder sp where upper(a.street_address) like sp.pat), 1, 0) as is_placeholder,
+           -- G4: distinct people holding THIS address on THIS day
+           (select count(distinct b.phn) from strata_addr b
+             where upper(b.street_address) = upper(a.street_address) and b.postal_norm = a.postal_norm
+               and b.eff_from <= d.demand_dt and (b.eff_to > d.demand_dt or b.eff_to is null)) as concurrent_n,
+           pc.postalcode is not null                                  as mapped,
+           case when pc.postalcode is not null and upper(trim(pc.csdname_2021)) = 'COCHRANE'
+                     and upper(trim(pc.csdtype_2021)) = 'T'          then 'Town of Cochrane'
+                when pc.postalcode is not null
+                     and upper(trim(pc.local_name)) = 'COCHRANE | SPRINGBANK' then 'Cochrane catchment'
+                when pc.postalcode is not null                       then 'Not a Cochrane-area resident'
+                when a.postal_norm is not null and left(a.postal_norm,1) <> 'T'
+                                                                     then 'Not a Cochrane-area resident'
+                else 'UNRESOLVED' end                                 as class_raw
     from demand_in_window d
     join strata_addr a on a.phn = d.phn
                       and a.eff_from <= d.demand_dt
                       and (a.eff_to > d.demand_dt or a.eff_to is null)
-    left join strata_shared sh on sh.street_u = upper(a.street_address) and sh.postal_norm = a.postal_norm
+    left join db_source_ah_postal_code.curated.tb_postal_code pc
+           on upper(regexp_replace(pc.postalcode, '[^A-Za-z0-9]', '')) = a.postal_norm
+),
+-- G2: how many were active, and do they disagree on class?
+strata_active_summary as (
+    select phn, count(*) as n_active,
+           count(distinct class_raw) as n_classes,
+           iff(count(distinct class_raw) > 1, 1, 0) as classes_disagree
+    from strata_active group by phn
+),
+-- the version chosen by the tiebreak (rule 4): latest effective_from, then postal
+strata_at_demand as (
+    select sa.*, sh.n_patients as shared_by_n,
+           iff(sa.eff_from = sa.created, 1, 0) as from_equals_creation,
+           ss.n_active, ss.classes_disagree
+    from strata_active sa
+    join strata_active_summary ss on ss.phn = sa.phn
+    left join strata_shared sh on sh.street_u = upper(sa.street_address) and sh.postal_norm = sa.postal_norm
+    qualify row_number() over (partition by sa.phn order by sa.eff_from desc, sa.postal_norm) = 1
+),
+-- G1: the same lookup at the alternative anchor (chosen version only)
+strata_at_demand_alt as (
+    select d.phn, a.postal_norm, a.street_address,
+           iff(exists (select 1 from strata_placeholder sp where upper(a.street_address) like sp.pat), 1, 0) as is_placeholder,
+           (select count(distinct b.phn) from strata_addr b
+             where upper(b.street_address) = upper(a.street_address) and b.postal_norm = a.postal_norm
+               and b.eff_from <= d.demand_dt_alt and (b.eff_to > d.demand_dt_alt or b.eff_to is null)) as concurrent_n,
+           case when pc.postalcode is not null and upper(trim(pc.csdname_2021)) = 'COCHRANE'
+                     and upper(trim(pc.csdtype_2021)) = 'T'          then 'Town of Cochrane'
+                when pc.postalcode is not null
+                     and upper(trim(pc.local_name)) = 'COCHRANE | SPRINGBANK' then 'Cochrane catchment'
+                when pc.postalcode is not null                       then 'Not a Cochrane-area resident'
+                when a.postal_norm is not null and left(a.postal_norm,1) <> 'T'
+                                                                     then 'Not a Cochrane-area resident'
+                else 'UNRESOLVED' end                                 as class_raw
+    from demand_in_window d
+    join strata_addr a on a.phn = d.phn
+                      and a.eff_from <= d.demand_dt_alt
+                      and (a.eff_to > d.demand_dt_alt or a.eff_to is null)
+    left join db_source_ah_postal_code.curated.tb_postal_code pc
+           on upper(regexp_replace(pc.postalcode, '[^A-Za-z0-9]', '')) = a.postal_norm
     qualify row_number() over (partition by d.phn order by a.eff_from desc, a.postal_norm) = 1
 ),
 -- rule 9: nothing active at demand, but an older address exists
@@ -423,29 +519,15 @@ strata_historical as (
     where sad.phn is null
     qualify row_number() over (partition by d.phn order by a.eff_from desc) = 1
 ),
--- rule 5: the same postal geography as the registry, never city_name
+-- rule 5 mapping is inside strata_active (same postal geography, never city_name)
 strata_geo as (
-    select s.*,
-           pc.postalcode                                            as mapped_postal,
-           iff(upper(trim(pc.csdname_2021)) = 'COCHRANE'
-               and upper(trim(pc.csdtype_2021)) = 'T', 1, 0)        as in_town,
-           iff(upper(trim(pc.local_name)) = 'COCHRANE | SPRINGBANK', 1, 0) as in_area,
-           case when pc.postalcode is not null and upper(trim(pc.csdname_2021)) = 'COCHRANE'
-                     and upper(trim(pc.csdtype_2021)) = 'T'          then 'Town of Cochrane'
-                when pc.postalcode is not null
-                     and upper(trim(pc.local_name)) = 'COCHRANE | SPRINGBANK' then 'Cochrane catchment'
-                when pc.postalcode is not null                       then 'Not a Cochrane-area resident'
-                when s.postal_norm is not null and left(s.postal_norm,1) <> 'T'
-                                                                     then 'Not a Cochrane-area resident'  -- out of province
-                else 'UNRESOLVED' end                                 as strata_residency_raw
-    from strata_at_demand s
-    left join db_source_ah_postal_code.curated.tb_postal_code pc
-           on upper(regexp_replace(pc.postalcode, '[^A-Za-z0-9]', '')) = s.postal_norm
+    select s.*, s.class_raw as strata_residency_raw from strata_at_demand s
 ),
 
 -- ── STEP 7 — ONE ROW PER PERSON ────────────────────────────────────────────
 master as (
     select d.phn, d.demand_dt, d.demand_fye, d.demand_event_type, d.was_approved,
+           d.demand_dt_alt, d.demand_fye_alt, d.first_approval_dt_alt, d.in_window, d.in_window_alt,   -- G1
            d.first_list_appearance, d.first_approval_dt, d.setting_at_list_entry,
            d.last_seen_on_list, d.on_list_at_followup, d.left_truncated, d.rated_cochrane,
            d.first_residential_ever, d.first_residential_stream,
@@ -467,6 +549,11 @@ master as (
                 when r.town_latest = 1                  then 'Town of Cochrane'
                 when r.area_latest = 1                  then 'Cochrane catchment'
                 else 'Not a Cochrane-area resident' end                              as residency_latest,
+           -- G1: METHOD B at the alternative anchor
+           case when coalesce(r.n_window_mapped_alt,0) = 0 then 'UNRESOLVED'
+                when r.town_latest_alt = 1                  then 'Town of Cochrane'
+                when r.area_latest_alt = 1                  then 'Cochrane catchment'
+                else 'Not a Cochrane-area resident' end                              as residency_latest_alt,
            -- FALLBACK — only meaningful when residency_latest is UNRESOLVED
            case when coalesce(r.n_predemand_mapped,0) = 0 then 'UNRESOLVED'
                 when r.town_fallback = 1                   then 'Town of Cochrane'
@@ -490,13 +577,24 @@ master as (
            sg.postal_norm                                      as strata_postal_code_at_demand,
            sg.city_name                                        as strata_city_at_demand,
            sg.eff_from                                         as strata_effective_from,
-           sg.shared_by_n                                      as strata_address_shared_by_n,
-           iff(coalesce(sg.shared_by_n,0) >= w.facility_min_patients, 1, 0) as strata_address_is_facility,
+           sg.shared_by_n                                      as strata_address_shared_by_n,       -- ever-shared, reporting only
+           sg.concurrent_n                                     as strata_address_concurrent_n,      -- G4: people holding it that day
+           iff(coalesce(sg.concurrent_n,0) >= w.facility_min_patients, 1, 0) as strata_address_is_facility,
+           sg.is_placeholder                                   as strata_address_is_placeholder,    -- G4
            sg.from_equals_creation                             as strata_from_equals_creation,
+           sg.n_active                                         as strata_n_active_at_demand,        -- G2
+           sg.classes_disagree                                 as strata_active_classes_disagree,   -- G2
            case when sg.phn is null                                   then null
-                when coalesce(sg.shared_by_n,0) >= w.facility_min_patients
+                when sg.is_placeholder = 1                            then 'NOT USED - placeholder address'
+                when coalesce(sg.concurrent_n,0) >= w.facility_min_patients
                                                                       then 'NOT USED - facility address'
                 else sg.strata_residency_raw end                        as strata_residency,
+           -- G1: Strata verdict at the alternative anchor
+           case when sga.phn is null                                  then null
+                when sga.is_placeholder = 1                           then 'NOT USED - placeholder address'
+                when coalesce(sga.concurrent_n,0) >= w.facility_min_patients
+                                                                      then 'NOT USED - facility address'
+                else sga.class_raw end                                  as strata_residency_alt,
            sh.postal_norm                                      as strata_historical_postal_code,
            sh.years_before_demand                              as strata_historical_years_before_demand,
            -- record validity: an impossible linkage can never take a cohort
@@ -524,8 +622,23 @@ master as (
     left join level3_after l3 on l3.phn = d.phn
     left join deaths     x  on x.phn  = d.phn
     left join strata_geo sg on sg.phn = d.phn
+    left join strata_at_demand_alt sga on sga.phn = d.phn
     left join strata_historical sh on sh.phn = d.phn
 ),
+-- ── G1 — OUTCOME AT THE ALTERNATIVE ANCHOR ─────────────────────────────────
+outcome_alt as (
+    select d.phn,
+           min(iff(a.admission_date <= w.follow_up_end, a.admission_date, null)) as first_placement_dt_alt
+    from demand_in_window d cross join w
+    left join adm_rep a on a.phn = d.phn and a.admission_date >= d.demand_dt_alt
+    group by d.phn
+),
+first_site_alt as (
+    select o.phn, a.in_cochrane as first_placement_in_cochrane_alt
+    from outcome_alt o join adm_rep a on a.phn = o.phn and a.admission_date = o.first_placement_dt_alt
+    qualify row_number() over (partition by o.phn order by a.in_cochrane desc, a.site) = 1
+),
+
 -- ── STEP 7b — FINAL RESIDENCY HIERARCHY (rule 7) ───────────────────────────
 master_final as (
     select m.*,
@@ -536,14 +649,29 @@ master_final as (
            case when m.residency_latest <> 'UNRESOLVED'                          then m.residency_latest
                 when m.strata_residency in ('Town of Cochrane','Cochrane catchment',
                                             'Not a Cochrane-area resident')      then m.strata_residency
-                else 'UNRESOLVED' end                                           as residency_final
+                else 'UNRESOLVED' end                                           as residency_final,
+           -- G1: the same hierarchy at the alternative anchor
+           case when m.residency_latest_alt <> 'UNRESOLVED'                      then m.residency_latest_alt
+                when m.strata_residency_alt in ('Town of Cochrane','Cochrane catchment',
+                                                'Not a Cochrane-area resident')  then m.strata_residency_alt
+                else 'UNRESOLVED' end                                           as residency_final_alt
     from master m
 ),
 classified as (
     select m.*,
+           oa.first_placement_dt_alt, fa.first_placement_in_cochrane_alt,
+           -- G1: cohort at the alternative anchor, same rule, gated on in_window_alt
+           case when m.in_window_alt = 0 or m.was_approved = 0 or m.record_valid = 0 then null
+                when m.residency_final_alt = 'Town of Cochrane' and fa.first_placement_in_cochrane_alt = 1 then 'A'
+                when m.residency_final_alt in ('Not a Cochrane-area resident','Cochrane catchment')
+                     and fa.first_placement_in_cochrane_alt = 1                                          then 'B'
+                when m.residency_final_alt = 'Town of Cochrane' and oa.first_placement_dt_alt is not null  then 'C'
+                when m.residency_final_alt = 'Town of Cochrane' and oa.first_placement_dt_alt is null      then 'D'
+                else null end as cohort_alt,
            -- PRIMARY: residency_final = registry latest address, else Strata
            -- address active at demand (rev 2.5). B = any NON-TOWN resident.
-           case when was_approved = 0 or record_valid = 0 then null
+           -- Gated on in_window (G1: the universe now also holds alt-only people).
+           case when in_window = 0 or was_approved = 0 or record_valid = 0 then null
                 when residency_final = 'Town of Cochrane' and first_placement_in_cochrane = 1 then 'A'
                 when residency_final in ('Not a Cochrane-area resident','Cochrane catchment')
                      and first_placement_in_cochrane = 1                                   then 'B'
@@ -551,7 +679,7 @@ classified as (
                 when residency_final = 'Town of Cochrane' and placed = 0                    then 'D'
                 else null end as cohort,
            -- the same rule on registry alone, so Strata's effect is visible
-           case when was_approved = 0 or record_valid = 0 then null
+           case when in_window = 0 or was_approved = 0 or record_valid = 0 then null
                 when residency_latest = 'Town of Cochrane' and first_placement_in_cochrane = 1 then 'A'
                 when residency_latest in ('Not a Cochrane-area resident','Cochrane catchment')
                      and first_placement_in_cochrane = 1                                    then 'B'
@@ -563,7 +691,7 @@ classified as (
            iff(residency_final = 'UNRESOLVED' and first_placement_in_cochrane = 1
                and was_approved = 1 and record_valid = 1, 1, 0)                          as cochrane_placement_residency_unresolved,
            -- SENSITIVITY: the published any-address-in-three-years rule
-           case when was_approved = 0 or record_valid = 0 then null
+           case when in_window = 0 or was_approved = 0 or record_valid = 0 then null
                 when residency_any3 = 'Town of Cochrane' and first_placement_in_cochrane = 1 then 'A'
                 when residency_any3 in ('Not a Cochrane-area resident','Cochrane catchment')
                      and first_placement_in_cochrane = 1                                  then 'B'
@@ -578,6 +706,8 @@ classified as (
             or first_placement_in_cochrane = 1
             or residency_final = 'UNRESOLVED', 1, 0) as cochrane_facing
     from master_final m
+    left join outcome_alt oa on oa.phn = m.phn
+    left join first_site_alt fa on fa.phn = m.phn
 )
 
 -- OUTPUT. Rev 2.3: NO FILTER. The full audit universe is returned. Everyone

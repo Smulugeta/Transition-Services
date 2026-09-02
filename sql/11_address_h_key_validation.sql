@@ -35,18 +35,62 @@ describe table db_source_strata_health_pathways.raw.address_h;
 describe table db_source_strata_health_pathways.raw.patient_h;
 describe table db_source_strata_health_pathways.raw.patient;
 
--- ── A. ADDRESS RECORDS PER PATIENT (the decisive question) ────────────────
+-- ── A. ADDRESS RECORDS PER PATIENT, AND ADDRESSES ACTIVE ON THE DEMAND DATE ─
+-- A1. records per patient (does a move create a new record?)
 with pa as (
     select distinct id as patient_id, address_id
     from db_source_strata_health_pathways.raw.patient_h
     where address_id is not null
 )
-select count(distinct address_id) as address_records, count(*) as patients
-from pa group by patient_id
-qualify true
-order by 1;
--- read as: how many patients have 1 record, 2 records, 3 ... If anyone has
--- more than 1, the current pointer is NOT sufficient.
+select address_records, count(*) as patients
+from (select patient_id, count(distinct address_id) as address_records from pa group by patient_id)
+group by 1 order by 1;
+-- If anyone has more than 1, the current pointer is NOT sufficient and the
+-- patient_h join (every pair) is required.
+
+-- A2. THE QUESTION THAT MATTERS: how many people have MORE THAN ONE address
+--     version ACTIVE ON their demand date, and do the competing versions
+--     disagree on Town / catchment / non-Town? Query 09 rev 2.6 answers this
+--     exactly for the cohort (strata_n_active_at_demand,
+--     strata_active_classes_disagree). This standalone version approximates
+--     the demand date as the person's first approval date on a Type A/B list.
+with k as (
+    select id as patient_id, regexp_replace(identifier1::string,'[^0-9]','') as phn
+    from db_source_strata_health_pathways.raw.patient
+    qualify length(phn) = 9 and phn <> '000000000'
+),
+dem as (
+    select regexp_replace(phn::string,'[^0-9]','') as phn,
+           min(coalesce(assess_approved_date, calculated_assess_approved_date))::date as demand_dt
+    from db_team_continuing_seniors_care.calgary_bi.ts_waitlist_trend_with_ratings_1671
+    where census_date >= '2021-04-01' and census_date < '2026-04-01'
+      and trim(care_type) in ('CAL - Long Term Care','EDM - LTC','CAL - Supportive Living Level 4 (DAL)',
+                              'CAL - Supportive Living Level 4 Dementia (DAL)','EDM - DSL4 / DSL4D')
+    group by 1 having demand_dt is not null
+),
+act as (
+    select d.phn, ah.id as address_record, ah.postal_code, ah.street_address,
+           case when pc.postalcode is not null and upper(trim(pc.csdname_2021))='COCHRANE'
+                     and upper(trim(pc.csdtype_2021))='T' then 'Town'
+                when pc.postalcode is not null and upper(trim(pc.local_name))='COCHRANE | SPRINGBANK' then 'catchment'
+                when pc.postalcode is not null then 'not Cochrane'
+                when left(upper(regexp_replace(ah.postal_code,'[^A-Za-z0-9]','')),1) <> 'T' then 'not Cochrane'
+                else 'unresolved' end as cls
+    from dem d
+    join k on k.phn = d.phn
+    join (select distinct id, address_id from db_source_strata_health_pathways.raw.patient_h) ph on ph.id = k.patient_id
+    join (select distinct id, postal_code, street_address, effective_from_date, effective_to_date
+          from db_source_strata_health_pathways.raw.address_h) ah on ah.id = ph.address_id
+    left join db_source_ah_postal_code.curated.tb_postal_code pc
+           on upper(regexp_replace(pc.postalcode,'[^A-Za-z0-9]','')) = upper(regexp_replace(ah.postal_code,'[^A-Za-z0-9]',''))
+    where ah.effective_from_date::date <= d.demand_dt
+      and (ah.effective_to_date::date > d.demand_dt or ah.effective_to_date is null)
+)
+select n_active, classes_disagree, count(*) as people
+from (select phn, count(*) as n_active, iff(count(distinct cls) > 1, 1, 0) as classes_disagree from act group by phn)
+group by 1,2 order by 1,2;
+-- rows with n_active > 1 AND classes_disagree = 1 are the only cases where
+-- the latest-effective_from tiebreak can change a residency verdict.
 
 -- does patient.address_id (current) differ from any patient_h address_id?
 select count(*)                                            as patients_with_history,
@@ -94,16 +138,63 @@ order by ah.effective_from_date;
 -- expected: a Surrey BC row, V3Z 9T1, effective from 2021-05-18, active on the
 -- 2021-06-01 demand date. If it is missing, the join is wrong.
 
--- ── E. FACILITY ADDRESSES — versions shared by many patients ───────────────
-select upper(trim(ah.street_address)) as street, upper(replace(ah.postal_code,' ','')) as postal,
-       count(distinct ph.id) as patients
-from (select distinct id, address_id from db_source_strata_health_pathways.raw.patient_h) ph
-join db_source_strata_health_pathways.raw.address_h ah on ah.id = ph.address_id
-group by 1,2 having count(distinct ph.id) >= 3
-order by 3 desc limit 60;
--- private homes appear once. Anything with 3+ is almost certainly a facility
--- (Bethany Cochrane, Hawthorne, Big Hill Lodge, hospitals ...). Query 09 rev
--- 2.5 refuses to classify residency from such an address.
+-- ── E. FACILITY CANDIDATES — CONCURRENT occupancy, not ever-shared ─────────
+-- "Ever shared by 3+" over decades of history flags apartment units with three
+-- successive tenants. A facility has many DIFFERENT people holding the same
+-- address ON THE SAME DAY. This lists addresses by their peak concurrent
+-- occupancy so a facility reference table can be built and confirmed by
+-- ALA, which is preferable to any numeric threshold.
+with v as (
+    select distinct ph.id as patient_id, upper(trim(ah.street_address)) as street,
+           upper(regexp_replace(ah.postal_code,'[^A-Za-z0-9]','')) as postal,
+           ah.effective_from_date::date as f, coalesce(ah.effective_to_date::date, current_date()) as t
+    from (select distinct id, address_id from db_source_strata_health_pathways.raw.patient_h) ph
+    join db_source_strata_health_pathways.raw.address_h ah on ah.id = ph.address_id
+    where ah.street_address is not null
+),
+-- sample the calendar quarterly and count distinct occupants per address per sample date
+cal as (select dateadd('quarter', seq4(), '2015-01-01'::date) as d from table(generator(rowcount => 48))),
+occ as (
+    select v.street, v.postal, c.d, count(distinct v.patient_id) as occupants
+    from v join cal c on c.d between v.f and v.t
+    group by 1,2,3
+)
+select street, postal, max(occupants) as peak_concurrent_occupants,
+       (select count(distinct patient_id) from v v2 where v2.street = occ.street and v2.postal = occ.postal) as ever_shared_by
+from occ
+group by 1,2 having max(occupants) >= 3
+order by 3 desc limit 100;
+-- Expect Bethany Cochrane, Hawthorne, Big Hill Lodge, hospitals, lodges and
+-- large seniors' residences at the top; apartment units should NOT appear.
+
+-- ── G. RAW PHN DIGIT LENGTHS BEFORE ANY PADDING (gate 5) ───────────────────
+-- Snowflake LPAD(x, 9) TRUNCATES a string longer than 9. A 10-digit identifier
+-- padded "to 9" silently became its first nine digits. Count first.
+select 'patient.identifier1' as source,
+       case when d = 0 then '0 digits' when d between 1 and 8 then '1-8 digits'
+            when d = 9 then '9 digits' else '>9 digits' end as digit_class,
+       count(*) as rows_, count_if(digits = '000000000') as all_zero
+from (select regexp_replace(identifier1::string,'[^0-9]','') as digits, length(regexp_replace(identifier1::string,'[^0-9]','')) as d
+      from db_source_strata_health_pathways.raw.patient)
+group by 1,2
+union all
+select 'waitlist.phn (distinct people)',
+       case when d = 0 then '0 digits' when d between 1 and 8 then '1-8 digits'
+            when d = 9 then '9 digits' else '>9 digits' end,
+       count(*), count_if(digits = '000000000')
+from (select distinct regexp_replace(phn::string,'[^0-9]','') as digits, length(regexp_replace(phn::string,'[^0-9]','')) as d
+      from db_team_continuing_seniors_care.calgary_bi.ts_waitlist_trend_with_ratings_1671
+      where census_date >= '2021-04-01' and census_date < '2026-04-01')
+group by 1,2
+union all
+select 'vital_stats.stkh_num_1',
+       case when d = 0 then '0 digits' when d between 1 and 8 then '1-8 digits'
+            when d = 9 then '9 digits' else '>9 digits' end,
+       count(*), count_if(digits = '000000000')
+from (select regexp_replace(stkh_num_1::string,'[^0-9]','') as digits, length(regexp_replace(stkh_num_1::string,'[^0-9]','')) as d
+      from db_source_ah_vital_stats.curated.tb_vital_stats_deaths_adhoc)
+group by 1,2
+order by 1,2;
 
 -- ── F. IS effective_from_date A MOVE-IN DATE OR A RECORD-CREATION DATE? ────
 -- creation_date is on patient_h. Compare each address record's FIRST version

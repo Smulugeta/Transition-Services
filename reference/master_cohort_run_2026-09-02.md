@@ -206,6 +206,57 @@ in the first year of the window. Confirm by pulling `first_approval_dt` and
 `first_residential_ever` for those 18 PHNs. This is exactly why the audit
 universe must not be filtered.
 
+## Seven sign-off gates (fifth review)
+
+The reviewer accepted the rev 2.5 rule-10 results as mechanically reproduced
+and set seven gates. Status, with what each needs:
+
+| Gate | Status | Finding |
+|---|---|---|
+| **1 Approval precedence** | **open — needs rev 2.6 run** | Current: `min` over rows of `coalesce(assess, calculated)`. Alternative: `coalesce(min(assess), min(calculated))` per person. Preview on the 777-person Cochrane-rated extract: **8 demand dates change (1.0%), all later; 5 cross a fiscal year; 2 enter or leave the window.** Rev 2.6 carries both anchors end to end — residency, Strata, placement and cohort at each — and the checker prints the five counts and the exact A/B/C/D impact. **89 / 148 / 192 / 69 are not signed off until it runs.** |
+| **2 Active addresses at demand** | open — needs rev 2.6 run | Rev 2.6 outputs `strata_n_active_at_demand` and `strata_active_classes_disagree`; the checker reports how many people had more than one active version, whether they disagree on class, and which cohort assignments the latest-`effective_from` tiebreak could touch. `sql/11` block A2 is the standalone form. |
+| **3 Surrey proof** | **proven** | PHN 49833-8261: demand 2021-06-01; registry UNRESOLVED → Strata `3288 156A ST, Surrey, V3Z 9T1` effective 2021-05-18 → not Cochrane → `residency_source = STRATA_ADDRESS_H`. |
+| **4 Facility audit** | **guard was wrong; fixed in rev 2.6** | The 48 blocked split 3: 17 · 4: 7 · 5: 2 · 6–19: 16 · 35–744: 6. The 3–5 tier (26 addresses) is **apartment units, not facilities** — `403-18 Hebert Road`, `353-5149 Mullen Road`, `304-9310 211 Street` — held by three or four *successive* tenants across the decades `address_h` covers. **7 of the 15 remaining unresolved were unresolved solely because of the guard**, six of them at such units and one at `NO FIXED ADDRESS` (80 people). Rev 2.6 replaces ever-shared with **concurrent occupancy on the demand date** (≥ 3 distinct people holding the address that day) and gives placeholder strings their own never-classified class. A facility reference table confirmed by ALA would be better than any threshold; `sql/11` block E lists candidates by peak concurrent occupancy. |
+| **5 Raw PHN before LPAD** | **real bug; fixed in rev 2.6** | Snowflake `LPAD(x, 9)` **truncates** a string longer than 9, so a 10-digit identifier silently became its first nine digits. Rev 2.6 counts digits first and accepts only exactly nine, in the patient, waitlist and death paths, with no padding. `sql/11` block G counts 0 / 1–8 / 9 / >9-digit identifiers in all three sources. |
+| **6 Fallback = evidence only** | confirmed | Unchanged since rev 2.4; nothing is removed from the uncertainty pool by a fallback address. |
+| **7 B = non-Town** | confirmed | B = 148 with `b_catchment` kept (6). |
+
+## Final validation table (rev 2.5 data; approval-precedence column pending rev 2.6)
+
+| | Registry only | Registry + Strata | Approval precedence | Any-3-year sensitivity |
+|---|---|---|---|---|
+| A resident, placed in Cochrane | 87 | **89** | — | 90 |
+| B non-Town, placed in Cochrane | 143 | **148** | — | 140 |
+| C resident, placed outside | 191 | **192** | — | 208 |
+| D resident, no placement in source | 68 | **69** | — | 74 |
+| Resident demand A + C + D | 346 | **350** | — | 372 |
+| Unresolved, approved, unplaced | 113 | **15** | — | — |
+| D mathematical maximum | 181 | **84** | — | — |
+
+### The 15 remaining unresolved, approved, unplaced (PHN masked)
+
+| PHN | Demand | Registry | Strata | D class |
+|---|---|---|---|---|
+| …8002 | 2021-11-30 | no registry record | no Strata row | D3 |
+| …5102 | 2022-02-10 | no registry record | no Strata row | D3 |
+| …2811 | 2022-02-16 | record, no year in lookback | no Strata row | D2 |
+| …4641 | 2022-02-17 | record, no year in lookback | facility guard (apartment, n=4) | D2 |
+| …3271 | 2022-09-15 | no registry record | no Strata row | D3 |
+| …6920 | 2022-09-22 | record, no year in lookback | no Strata row | D2 |
+| …3831 | 2022-11-04 | record, no year in lookback | facility guard (apartment, n=4) | D2 |
+| …3100 | 2022-12-21 | record, no year in lookback | no Strata row | D2 |
+| …3100 | 2022-12-21 | record, no year in lookback | no Strata row | D3 |
+| …6131 | 2023-11-20 | record, no year in lookback | address, no postal code | D2 |
+| …8612 | 2025-08-15 | no registry record | facility guard (apartment, n=3) | D3 |
+| …0812 | 2025-10-10 | no registry record | facility guard (apartment, n=3) | D3 |
+| …4912 | 2025-12-02 | no registry record | facility guard (apartment, n=3) | D1 |
+| …1330 | 2026-02-18 | record, no year in lookback | NO FIXED ADDRESS (n=80) | D1 |
+| …0812 | 2026-03-13 | no registry record | facility guard (apartment, n=3) | D1 |
+
+Under rev 2.6's concurrent-occupancy rule, the six apartment-unit cases will
+resolve from their Strata address; the placeholder stays unresolved by design.
+Expect the remaining count to fall to about 9.
+
 ## Status
 
 - Cohort D is **measurable, reconciled, reproducible on two runs, and not
@@ -220,12 +271,10 @@ universe must not be filtered.
 - Nothing here goes into the report until the reviewer clears it, and every D
   figure carries "no Type A/B placement observed in the Calgary/Edmonton
   Strata placement source by 31 March 2026".
-- Rev 2.5 has been run (it includes the rev 2.4 rules). One death-before-
-  demand record remains in the universe, flagged `record_valid = 0`, in no
-  cohort. **`sql/11` blocks A and D have not been reported back**; until block
-  A shows whether anyone holds more than one address record, and block D shows
-  the Surrey row for PHN 49833-8261, the Strata increments rest on the sample
-  evidence only. The checker rev 4 already
+- Rev 2.5 has been run and its rule-10 results are accepted as mechanically
+  reproduced. **Rev 2.6 is written and not yet run**; it closes gates 1, 2, 4
+  and 5. Sign-off on 89 / 148 / 192 / 69 waits on the gate-1 sensitivity.
+  `sql/11` blocks A1, A2, E and G are to be reported back with it. The checker rev 4 already
   applies the rev 2.4 rules to the rev 2.3 extract, which is where the figures
   above come from. 35 people are left-truncated in the full universe, none in
   any cohort.

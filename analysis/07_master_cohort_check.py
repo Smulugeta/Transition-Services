@@ -2,6 +2,21 @@
 """
 Validate and tabulate the master demand cohort (output of sql/09, rev 2.3).
 
+Revision 6 (seven sign-off gates):
+  G1 approval-precedence sensitivity: people whose demand date changes,
+     crossing a fiscal year, entering/leaving the window, changing residency,
+     and the exact A/B/C/D impact (from the …_ALT columns of sql/09 rev 2.6).
+  G2 addresses active on the demand date: how many people had more than one,
+     whether they disagree on class, whether the tiebreak changes a cohort.
+  G3 the Surrey proof case printed from the extract.
+  G4 facility audit: concurrent-occupancy distribution, every blocked address
+     with 3-5 people, and how many of the remaining unresolved are blocked by
+     the guard alone.
+  Remaining unresolved, approved, unplaced clients listed (PHN masked).
+  Final validation table: registry-only / registry+Strata / approval-precedence.
+  Cohorts are gated on IN_WINDOW where the extract carries it (rev 2.6 admits
+  alt-anchor-only people to the universe).
+
 Revision 5 (Strata address history as a secondary residency source):
   - Cohorts recomputed on RESIDENCY_FINAL (registry, else Strata address
     active at demand); COHORT_REGISTRY_ONLY kept so Strata's effect is shown.
@@ -58,15 +73,19 @@ def phn(s):
 def pct(a, b): return f"{a/b*100:5.1f}%" if b else "   —  "
 def col(r, k, default=""): return (r.get(k) or default).strip()
 
-def cohort_of(r, res, b_rule="nontown"):
+def cohort_of(r, res, b_rule="nontown", pl=None, inc=None, inw=None):
     """The one rule, applied to whichever residency verdict is passed in.
     b_rule 'nontown' (rev 2.4+): B = Not-Cochrane-area OR catchment, placed in Cochrane.
-    b_rule 'nonarea'  (rev <=2.3): B = Not-Cochrane-area only."""
-    if not r["_app"] or not r["_valid"]: return None
-    if res == TOWN and r["_inc"]:           return "A"
-    if r["_inc"] and (res == NOT or (b_rule == "nontown" and res == AREA)): return "B"
-    if res == TOWN and r["_pl"]:            return "C"
-    if res == TOWN:                         return "D"
+    b_rule 'nonarea'  (rev <=2.3): B = Not-Cochrane-area only.
+    pl / inc / inw default to the primary anchor's placement, location and window flag."""
+    pl  = r["_pl"]  if pl  is None else pl
+    inc = r["_inc"] if inc is None else inc
+    inw = r["_inw"] if inw is None else inw
+    if not inw or not r["_app"] or not r["_valid"]: return None
+    if res == TOWN and inc:           return "A"
+    if inc and (res == NOT or (b_rule == "nontown" and res == AREA)): return "B"
+    if res == TOWN and pl:            return "C"
+    if res == TOWN:                   return "D"
     return None
 
 def load(path):
@@ -84,6 +103,13 @@ def load(path):
         r["_src"]  = col(r,"RESIDENCY_SOURCE") or ("REGISTRY" if r["_resL"] != UNRES else "UNRESOLVED")
         r["_strat"] = col(r,"STRATA_RESIDENCY") or None
         r["_seff"]  = day(col(r,"STRATA_EFFECTIVE_FROM"))
+        r["_inw"]   = col(r,"IN_WINDOW","1") == "1"
+        r["_inwA"]  = col(r,"IN_WINDOW_ALT","") == "1"
+        r["_demA"]  = day(col(r,"DEMAND_DT_ALT"))
+        r["_resFinA"] = col(r,"RESIDENCY_FINAL_ALT") or None
+        r["_plA"]   = day(col(r,"FIRST_PLACEMENT_DT_ALT"))
+        r["_incA"]  = col(r,"FIRST_PLACEMENT_IN_COCHRANE_ALT","0") == "1"
+        r["_sqlcohA"] = col(r,"COHORT_ALT") or None
         r["_resF"] = col(r,"RESIDENCY_FALLBACK") or None
         r["_dcls"] = col(r,"D_CLASS")
         r["_sqlcoh"] = col(r,"COHORT") or None
@@ -97,6 +123,8 @@ def load(path):
         r["_coh"]  = cohort_of(r, r["_resFin"])        # PRIMARY, recomputed on residency_final, B = non-Town
         r["_cohR"] = cohort_of(r, r["_resL"])          # registry only
         r["_cohA"] = cohort_of(r, r["_resA"])          # SENSITIVITY, recomputed
+        r["_cohAlt"] = (cohort_of(r, r["_resFinA"], pl=r["_plA"], inc=r["_incA"], inw=r["_inwA"])
+                        if r["_resFinA"] else None)     # G1: approval-precedence anchor
     return rows
 
 # ── 1. integrity — gate ──────────────────────────────────────────────────────
@@ -137,6 +165,10 @@ def integrity(rows):
                                                sum(1 for r in rows if r["_src"]=="STRATA_ADDRESS_H" and col(r,"STRATA_ADDRESS_IS_FACILITY","0")=="1")),
         ("residency_final not in {registry verdict, strata verdict, UNRESOLVED}",
                                                sum(1 for r in rows if has_25 and r["_resFin"] not in (r["_resL"], r["_strat"] or "", UNRES))),
+        ("SQL COHORT_ALT disagrees with recomputed alt cohort (G1)",
+                                               sum(1 for r in rows if "COHORT_ALT" in rows[0] and (r["_sqlcohA"] or None) != (r["_cohAlt"] or None))),
+        ("cohort assigned to a person outside the window (G1 gating)",
+                                               sum(1 for r in rows if r["_coh"] and not r["_inw"])),
     ]
     bad = 0
     for label, c in checks:
@@ -236,6 +268,105 @@ def strata(rows):
     cre = sum(1 for r in res if col(r,"STRATA_FROM_EQUALS_CREATION","0")=="1")
     print(f"   of the {len(res):,} Strata resolutions: out-of-province postal code {oop:,}; effective_from equals record creation date {cre:,}\n")
 
+# ── G1. approval-precedence sensitivity ─────────────────────────────────────
+def gate1(rows):
+    print("G1. APPROVAL-DATE PRECEDENCE — row-level coalesce (current) vs person-level coalesce(min,min)")
+    if "DEMAND_DT_ALT" not in rows[0]:
+        print("   not in this extract (pre rev 2.6). Preview on a 777-person extract: 8 dates change (1.0%), 5 cross a FY, 2 enter/leave the window.\n"); return
+    both = [r for r in rows if r["_dem"] and r["_demA"]]
+    chg = [r for r in both if r["_dem"] != r["_demA"]]
+    fye = lambda d: d.year+1 if d.month>=4 else d.year
+    fy  = sum(1 for r in chg if fye(r["_dem"]) != fye(r["_demA"]))
+    enter = sum(1 for r in rows if r["_inwA"] and not r["_inw"]); leave = sum(1 for r in rows if r["_inw"] and not r["_inwA"])
+    resch = sum(1 for r in chg if r["_resFin"] != (r["_resFinA"] or r["_resFin"]))
+    later = sum(1 for r in chg if r["_demA"] > r["_dem"])
+    print(f"   people with both anchors {len(both):,}; demand date changes {len(chg):,} ({pct(len(chg),len(both)).strip()}), of which later {later:,}")
+    print(f"   crossing a fiscal-year boundary {fy:,};  entering the window {enter:,};  leaving it {leave:,};  residency class changes {resch:,}")
+    cP = Counter(r["_coh"] for r in rows if r["_coh"]); cA = Counter(r["_cohAlt"] for r in rows if r["_cohAlt"])
+    print(f"\n   {'cohort':8s} {'current':>9} {'alt':>9} {'diff':>6}")
+    for k in ("A","B","C","D"): print(f"   {k:8s} {cP[k]:9,} {cA[k]:9,} {cA[k]-cP[k]:+6,}")
+    rp = cP["A"]+cP["C"]+cP["D"]; ra = cA["A"]+cA["C"]+cA["D"]
+    print(f"   {'A+C+D':8s} {rp:9,} {ra:9,} {ra-rp:+6,}")
+    tr = Counter((r["_coh"] or "-", r["_cohAlt"] or "-") for r in rows if (r["_coh"] or r["_cohAlt"]) and r["_coh"] != r["_cohAlt"])
+    if tr:
+        print("   person-level moves:"); [print(f"     {a} -> {b} {v:5,}") for (a,b),v in tr.most_common()]
+    print()
+
+# ── G2. addresses active on the demand date ─────────────────────────────────
+def gate2(rows):
+    print("G2. STRATA ADDRESSES ACTIVE ON THE DEMAND DATE")
+    if "STRATA_N_ACTIVE_AT_DEMAND" not in rows[0]:
+        print("   not in this extract (pre rev 2.6); see sql/11 block A2.\n"); return
+    used = [r for r in rows if r["_src"]=="STRATA_ADDRESS_H"]
+    na = Counter(int(col(r,"STRATA_N_ACTIVE_AT_DEMAND","0") or 0) for r in used)
+    print(f"   among the {len(used):,} people Strata resolved, active versions on the demand date: {dict(sorted(na.items()))}")
+    multi = [r for r in used if int(col(r,"STRATA_N_ACTIVE_AT_DEMAND","0") or 0) > 1]
+    dis = [r for r in multi if col(r,"STRATA_ACTIVE_CLASSES_DISAGREE","0")=="1"]
+    print(f"   more than one active: {len(multi):,};  competing versions DISAGREE on class: {len(dis):,}")
+    coh = Counter(r["_coh"] or "-" for r in dis)
+    print(f"   of the disagreeing, cohort under the tiebreak: {dict(coh)}  <- these are the only assignments the tiebreak could change\n")
+
+# ── G3. Surrey proof ────────────────────────────────────────────────────────
+def gate3(rows):
+    print("G3. PROOF CASE — PHN 49833-8261")
+    r = next((r for r in rows if r["_phn"]=="498338261"), None)
+    if not r: print("   NOT IN THE EXTRACT\n"); return
+    print(f"   demand {r['_dem']}  registry {r['_resL']}  ->  Strata '{col(r,'STRATA_ADDRESS_AT_DEMAND')}' {col(r,'STRATA_CITY_AT_DEMAND')} "
+          f"{col(r,'STRATA_POSTAL_CODE_AT_DEMAND')} effective {col(r,'STRATA_EFFECTIVE_FROM')[:10]}  ->  {r['_strat']}")
+    ok = r["_resL"]==UNRES and r["_src"]=="STRATA_ADDRESS_H" and r["_resFin"]==NOT
+    print(f"   residency_source {r['_src']}   residency_final {r['_resFin']}   {'PROVEN' if ok else 'FAILS'}\n")
+
+# ── G4. facility audit ──────────────────────────────────────────────────────
+def gate4(rows):
+    print("G4. FACILITY GUARD AUDIT")
+    prev = [r for r in rows if r["_resL"]==UNRES]
+    fac = [r for r in prev if col(r,"STRATA_ADDRESS_IS_FACILITY","0")=="1"]
+    key = "STRATA_ADDRESS_CONCURRENT_N" if "STRATA_ADDRESS_CONCURRENT_N" in rows[0] else "STRATA_ADDRESS_SHARED_BY_N"
+    basis = "CONCURRENT occupants on the demand date" if key.endswith("CONCURRENT_N") else "EVER shared by (pre rev 2.6 — over-blocks apartment units)"
+    print(f"   guard basis: {basis}")
+    print(f"   blocked: {len(fac):,};  distribution of {key}: {dict(sorted(Counter(int(col(r,key,'0') or 0) for r in fac).items()))}")
+    ph = [r for r in prev if col(r,"STRATA_ADDRESS_IS_PLACEHOLDER","0")=="1"]
+    if ph: print(f"   placeholder addresses (NO FIXED ADDRESS, EVACUEE …), separate class: {len(ph):,}")
+    small = [r for r in fac if 3 <= int(col(r,key,"0") or 0) <= 5]
+    print(f"   every blocked address with 3-5 people ({len(small):,}):")
+    for r in sorted(small, key=lambda x: int(col(x,key,"0") or 0)):
+        print(f"     n={col(r,key)}  {col(r,'STRATA_ADDRESS_AT_DEMAND')[:38]:38s} {col(r,'STRATA_CITY_AT_DEMAND')[:14]:14s} {col(r,'STRATA_POSTAL_CODE_AT_DEMAND'):7s}  approved&unplaced {int(r['_app'] and not r['_pl'])}")
+    rem = [r for r in rows if r["_resFin"]==UNRES and r["_app"] and not r["_pl"] and r["_valid"] and r["_inw"]]
+    sole = [r for r in rem if col(r,"STRATA_ADDRESS_IS_FACILITY","0")=="1"]
+    print(f"   remaining unresolved+approved+unplaced: {len(rem):,}; unresolved SOLELY because of the guard: {len(sole):,}")
+    print( "   A facility reference table confirmed by ALA is preferable to any threshold; sql/11 block E lists candidates.\n")
+
+# ── remaining unresolved clients ────────────────────────────────────────────
+def remaining(rows):
+    rem = [r for r in rows if r["_resFin"]==UNRES and r["_app"] and not r["_pl"] and r["_valid"] and r["_inw"]]
+    print(f"REMAINING UNRESOLVED, APPROVED, UNPLACED — {len(rem):,} people (PHN masked)")
+    for r in sorted(rem, key=lambda x: x["_dem"]):
+        st_ = ("placeholder" if col(r,"STRATA_ADDRESS_IS_PLACEHOLDER","0")=="1" else "facility" if col(r,"STRATA_ADDRESS_IS_FACILITY","0")=="1"
+               else "no postal" if col(r,"STRATA_ADDRESS_AT_DEMAND") and not col(r,"STRATA_POSTAL_CODE_AT_DEMAND")
+               else "no strata row" if not col(r,"STRATA_ADDRESS_AT_DEMAND") else "unmapped T-code")
+        print(f"   …{r['_phn'][-4:]}  demand {r['_dem']}  registry: {col(r,'RESIDENCY_MISSING_REASON')[:36]:36s} strata: {st_:13s} {r['_dcls'][:2] or '-'}")
+    print()
+
+# ── final validation table ──────────────────────────────────────────────────
+def final_table(rows):
+    print("FINAL VALIDATION TABLE")
+    cR = Counter(r["_cohR"] for r in rows if r["_cohR"]); cF = Counter(r["_coh"] for r in rows if r["_coh"])
+    cA = Counter(r["_cohAlt"] for r in rows if r["_cohAlt"]); cS = Counter(r["_cohA"] for r in rows if r["_cohA"])
+    hasalt = "DEMAND_DT_ALT" in rows[0]
+    def unres(res_key, inw_key="_inw"):
+        return sum(1 for r in rows if r[res_key]==UNRES and r["_app"] and not r["_pl"] and r["_valid"] and r[inw_key])
+    uR, uF = unres("_resL"), unres("_resFin")
+    uA = sum(1 for r in rows if (r["_resFinA"] or "")==UNRES and r["_app"] and not r["_plA"] and r["_valid"] and r["_inwA"]) if hasalt else None
+    hdr = f"   {'':34s} {'registry only':>14} {'registry+Strata':>16} {'approval-prec.':>15} {'any-3-yr sens.':>15}"
+    print(hdr)
+    def row(lab, a, b, c, d): print(f"   {lab:34s} {a:>14} {b:>16} {(c if c is not None else '—'):>15} {d:>15}")
+    for k, lab in (("A","A  resident, placed in Cochrane"),("B","B  non-Town, placed in Cochrane"),("C","C  resident, placed outside"),("D","D  resident, no placement in source")):
+        row(lab, f"{cR[k]:,}", f"{cF[k]:,}", f"{cA[k]:,}" if hasalt else None, f"{cS[k]:,}")
+    row("resident demand A+C+D", f"{cR['A']+cR['C']+cR['D']:,}", f"{cF['A']+cF['C']+cF['D']:,}", f"{cA['A']+cA['C']+cA['D']:,}" if hasalt else None, f"{cS['A']+cS['C']+cS['D']:,}")
+    row("unresolved, approved, unplaced", f"{uR:,}", f"{uF:,}", f"{uA:,}" if hasalt else None, "—")
+    row("D mathematical maximum", f"{cR['D']+uR:,}", f"{cF['D']+uF:,}", f"{cA['D']+uA:,}" if hasalt else None, "—")
+    print("   B = any non-Town resident placed in Cochrane (b_catchment kept). Fallback registry addresses are evidence only.\n")
+
 # ── 3b. residency evidence ──────────────────────────────────────────────────
 def evidence(rows):
     print("3b. RESIDENCY EVIDENCE for the verdicts actually used (A/C/D people)")
@@ -321,6 +452,7 @@ def main(a):
     print(f"\n{a.master_csv}\n{len(rows):,} people in the audit universe\n")
     if not integrity(rows): sys.exit("INTEGRITY CHECKS FAILED — nothing else is printed. Fix the query first.")
     cP = cohorts(rows); uncertainty(rows, cP); strata(rows); evidence(rows); methods(rows); year_waits(rows)
+    gate1(rows); gate2(rows); gate3(rows); gate4(rows); remaining(rows); final_table(rows)
     if a.published: reconcile(rows, a.published, cP)
     print("A clean run is a data-integrity result, not a methodological sign-off.")
 

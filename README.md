@@ -7,7 +7,7 @@ Everything here is reproducible from the SQL extracts and the two analysis
 scripts. Every published figure traces to a numbered block in
 `sql/01_demand_capacity_report.sql`.
 
-> **Status (2026-09-02, rev 2.5 run).** Definitions: *new Type A/B demand
+> **Status (2026-09-02, fifth review — seven gates).** Definitions: *new Type A/B demand
 > arising FY2022–FY2026*; residency = registry latest pre-demand address, else
 > the Strata address effective at demand; B = any non-Town resident placed in
 > Cochrane. **With Strata: A 89 · B 148 · C 192 · D 69 (13 still waiting / 25
@@ -15,11 +15,17 @@ scripts. Every published figure traces to a numbered block in
 > accepted for A, C and resident demand: 87 / 143 / 191 / 68 = 346. Strata
 > resolved 430 of 524 registry-unresolved people (423 not Cochrane, 4 Town, 3
 > catchment) and cut the mathematical maximum on D from 181 to 84. All
-> eighteen integrity checks pass on the 33,002-person universe. **Not final
-> sign-off:** the Strata increments (+2/+5/+1/+1) await the reviewer, the B
-> definition awaits the consultant, and **`sql/11` blocks A and D have not been
-> reported back** — until they are, the address-history join rests on sample
-> evidence. Every figure and correction is in
+> eighteen integrity checks pass on the 33,002-person universe. The reviewer accepted
+> those as mechanically reproduced and set seven gates. Three are closed from
+> local data (Surrey proof; fallback = evidence only; B = non-Town = 148). Two
+> found real defects, fixed in `sql/09` rev 2.6: the facility guard blocked
+> apartment units held by successive tenants (7 of the 15 remaining unresolved
+> were blocked by it alone) and now uses concurrent occupancy; and `LPAD`
+> silently truncated identifiers longer than nine digits, so digits are now
+> counted before any padding. Two need the rev 2.6 run: the approval-date
+> precedence sensitivity (preview: 1% of demand dates move, all later) and the
+> count of people with more than one Strata address active at demand. **Not
+> final sign-off until gate 1 is known.** Every figure and correction is in
 > `reference/master_cohort_run_2026-09-02.md`.
 > The word "province-wide" is **withdrawn permanently for this source**:
 > `sql/10_coverage_checks.sql` has been run and the admissions source is the
@@ -388,7 +394,7 @@ sql/
   08_master_cohort.sql            CONTROLLING: one demand event per person, A–D derived
   09_master_cohort_standalone.sql paste-and-run master cohort, rev 2 — one row per person
   10_coverage_checks.sql          zone coverage, legacy codes, NULL sources, ties, approval fields
-  11_address_h_key_validation.sql proves the Strata address-history join before 09 rev 2.5 is trusted
+  11_address_h_key_validation.sql proves the Strata join; A2 active-at-demand, E facility candidates, G raw PHN digits
 analysis/
   04_displacement_check.py        joins 02 and 03 — the 138-of-220 finding
   06_exit_classification.py       validates and classifies 05's output
@@ -465,9 +471,10 @@ Not blocking anything published, but each would strengthen the case:
    admissions per 1,000 seniors — benchmarkable against comparable Alberta
    communities and projectable against the town's growth. Single most useful
    number not yet in hand, and it needs no external request.
-2. **Report back `sql/11` blocks A and D** (address records per patient; the
-   Surrey row for PHN 49833-8261). **Consultant confirms the meaning of B.**
-   Then the reviewer's fifth pass on the Strata increments. Still for ALA: a Central-zone source; the Retired-DAL/DEL codes; which approval
+2. **Run `sql/09` rev 2.6 and the checker** — it closes gates 1, 2, 4 and 5
+   and fills the approval-precedence column of the final table. Report back
+   `sql/11` blocks A1, A2, E and G. Still for ALA (a facility reference table
+   is now the most useful of these): a Central-zone source; the Retired-DAL/DEL codes; which approval
    field is operational. Waitlist history before 2021-04-01 would additionally
    resolve the 1,604 left-truncated people and turn the 138 displacement floor
    into a count.
