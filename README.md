@@ -7,14 +7,14 @@ Everything here is reproducible from the SQL extracts and the two analysis
 scripts. Every published figure traces to a numbered block in
 `sql/01_demand_capacity_report.sql`.
 
-> **Status after review (2026-09-02).** A, B and C are **provisional**: they
-> rest on placed clients, where residency and destination are directly
-> observed, and are safe to quote as such. **Cohort D is not signed off** and
-> no A + C + D total may be quoted. Review found four logic problems in the
-> first cohort D pass; all four are corrected in the queries below, and
-> `sql/08_master_cohort.sql` now makes the A–D framework the controlling logic
-> rather than bolting D onto A/B/C afterwards. It has not yet been run against
-> the warehouse. See *Cohort D* for the findings and what remains.
+> **Status after second review (2026-09-02).** A, B and C are **provisional**.
+> **Cohort D is not signed off. Do not use A + C + D. Do not call D validated.
+> A clean run of the checker is a data-integrity result, not a methodological
+> sign-off.** Two rounds of review found fourteen problems in the cohort D
+> work; all are corrected or measured in `sql/09` and `analysis/07` as
+> described under *Cohort D*. Neither has been run against the warehouse.
+> The word "province-wide" is **withdrawn** until `sql/10_coverage_checks.sql`
+> shows the admissions source covers zones other than Calgary and Edmonton.
 
 ---
 
@@ -232,29 +232,50 @@ Each was confirmed in the data before it was fixed.
 | 3 | Cohort D was read from the first spell's exit reason, not the person's whole pathway | **4,598 people (8.7%)** show no placement on their first spell and were placed later | `ever_placed` / `first_placement_date` computed across all spells per person; 06 gained a person-level block |
 | 4 | A/C selected on placement-in-window, D on list-entry-in-window — different populations, and the bias understates unmet demand. The census also left-truncates: **1,604 people** were already on the list on day one | Anchor-agreement test (block V) was necessary but not sufficient | `sql/08_master_cohort.sql`: one demand event per person, residency read there, outcome read forward. `left_truncated` flag on every row so figures run with and without |
 
+### Second review — ten more findings, all confirmed
+
+| | Finding | Measured | Fix in `sql/09` rev 2 |
+|---|---|---|---|
+| 1 | Placement after 2026-03-31 could still make someone A or C | — | Outcome capped at `follow_up_end`; later placements carried as `first_placement_after_followup` for sensitivity only. Checker now tests for it |
+| 2 | Demand event was first census appearance, not approval | 8.2% of list-appearers are never approved; approval precedes first appearance for 710 of 735 | Demand event = `coalesce(assess_approved_date, calculated_assess_approved_date)`; never-approved carried with `was_approved = 0` and excluded from A–D |
+| 3 | "Still waiting" was not identified; the checker relabelled "no placement observed" as still waiting | 2,414 people on the census on the last day | D split: **D1** on list at follow-up · **D2** died before placement · **D3** exited, no placement observed in source |
+| 4 | Level 3 dropped from the first-ever-admission test, so a Level 3 → Type A transfer looked like new demand | — | Two vocabularies: historical residential scope (A, B, Level 3, legacy codes) for "already in care"; reporting scope (A, B) for outcomes |
+| 5 | **"Province-wide" is not demonstrated** | The admissions source's entire `care_type` vocabulary is CAL-/EDM-prefixed. No Central, North or South labels exist | Claim withdrawn. D3 is an upper bound until `sql/10` check 1 is run and ALA confirms zone coverage |
+| 6 | Residency = *any* Town address in 3 prior FY, not residence *at* the demand event | — | Both methods carried: `residency_any3` (published) and `residency_latest`. Checker prints the person-level transition matrix and the cohort impact. Published rule unchanged; effect measured |
+| 7 | Inner join to the postal lookup deleted registry rows with unmapped codes into "no registry record" | — | LEFT join; `residency_missing_reason` in four classes |
+| 8 | Checker printed every table before exiting on integrity failure | — | Stops immediately; nothing below the checks is printed |
+| 9 | No placement-after-follow-up integrity test | — | Added, plus five others |
+| 10 | NULL `source_location` dropped by `<>`; same-day ties resolved arbitrarily | 11 NULL sources in 55,642; 0 same-day ties in the Cochrane cohort | `is distinct from`; deterministic tiebreak (Cochrane first, then site) with `n_sameday_first` reported |
+
+Also found: `CAL - Retired - DAL` (1,759 admissions) and `CAL - Retired - DEL`
+(47) are not in the published vocabulary and look like the pre-rename Type B
+and Level 3 codes. Included in scope pending ALA confirmation; `sql/10` check 2
+sizes them.
+
 ### The controlling logic: one person-level demand cohort
 
-Each person's **demand event** is the earliest of their first Type A/B waitlist
-entry and their first Type A/B admission. Everyone has one — including the
-people who were never placed, which is what made D impossible under the
-admission anchor. Residency is read at that event; the outcome is read forward
-across everything observable.
+Each person's **demand event** is the earliest of their first Type A/B
+**approval** date and their first Type A/B admission. Everyone who was ever
+ready for a bed has one — including the people never placed. Residency is read
+at that event; the outcome is read forward to 2026-03-31 and no further.
 
 | Cohort | Cochrane resident at demand event | Placed by end of follow-up | Where |
 |---|---|---|---|
 | A | yes | yes | Cochrane |
 | B | no | yes | Cochrane |
 | C | yes | yes | outside |
-| D | yes | **no placement observed** | — |
+| D1 | yes | no — **on the list at follow-up** | — |
+| D2 | yes | no — **died before placement** | — |
+| D3 | yes | no — **exited, no placement observed in source** | — |
 
 **Resident demand = A + C + D.** Use of Cochrane capacity = A + B, per
 admission, from query 01. Rated or preferred site is analysed separately
 (query 03) and never substituted for actual placement.
 
-**D means "no Type A/B placement observed by end of follow-up"**, not "never
-got a bed". It contains people still waiting on 2026-03-31, people who died
-waiting, people who withdrew, and people placed outside the data. `d_outcome`
-keeps those apart. Do not collapse them into one word in prose.
+**D means "no Type A/B placement observed in this source by 2026-03-31"**, not
+"never got a bed". D3 in particular may contain people placed in a zone the
+source does not cover. `d_class` keeps D1/D2/D3 apart. Do not collapse them
+into one word in prose.
 
 **Cohort D is filtered on residency, not on who rated Cochrane.** Only 159 of
 the 317 placed Town residents ever rated a Cochrane site — about half. Building
@@ -305,7 +326,8 @@ sql/
   05_waitlist_spells.sql          cohort D — spells, exits, deaths (corrected)
   07_cohort_d_residency.sql       cohort D — list-entry residency, diagnostic (corrected)
   08_master_cohort.sql            CONTROLLING: one demand event per person, A–D derived
-  09_master_cohort_standalone.sql paste-and-run version of 08 — one row per person
+  09_master_cohort_standalone.sql paste-and-run master cohort, rev 2 — one row per person
+  10_coverage_checks.sql          zone coverage, legacy codes, NULL sources, ties, approval fields
 analysis/
   04_displacement_check.py        joins 02 and 03 — the 138-of-220 finding
   06_exit_classification.py       validates and classifies 05's output
@@ -380,8 +402,10 @@ Not blocking anything published, but each would strengthen the case:
    admissions per 1,000 seniors — benchmarkable against comparable Alberta
    communities and projectable against the town's growth. Single most useful
    number not yet in hand, and it needs no external request.
-2. **Run query 08 and its Block R.** That is the gate on cohort D and on any
-   A + C + D total. Waitlist history before 2021-04-01 would additionally
+2. **Run `sql/10` check 1 first, then `sql/09`, then the checker.** Check 1
+   decides whether D3 is a finding or an artefact of source coverage. Then
+   confirm with ALA: zone coverage, the Retired-DAL/DEL codes, and which
+   approval field is operational. Waitlist history before 2021-04-01 would additionally
    resolve the 1,604 left-truncated people and turn the 138 displacement floor
    into a count.
 3. **Confirm with ALA:** the meaning of `rating = 0` in the waitlist source,
