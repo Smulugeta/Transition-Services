@@ -16,6 +16,17 @@ THE THREE THINGS THIS EXISTS TO STOP
      number moves ~58% between a 7-day and a 180-day reading.
   3. Counting a re-registration as an exit. Many apparent disappearances
      continue under a new patient_transfer_id within days.
+  4. Reading cohort D off a single spell. The person-level block at the end
+     asks "was this person EVER placed, across every spell we can see" — 8.7%
+     of people show no placement on their first spell and were placed later.
+
+NOTE ON THE ADMISSION BOUND
+  Query 05 now bounds each spell's admission from above by the next spell's
+  entry. On a file produced by the earlier, unbounded version, one admission
+  can appear on several spells of the same transfer. The person-level block
+  is unaffected by that (it collapses to ever-placed), but the spell-level
+  table over-counts PLACED. The script reports how many spells share an
+  admission so the file's vintage is visible.
 
 USAGE
     python3 06_exit_classification.py <spells.csv> [--window 30] [--rereg 90]
@@ -154,6 +165,43 @@ def main(path, window, rereg_days):
               f"vs {anyd/n*100:.1f}% overall")
         print("  CARE_STREAM is not in this extract — add it in query 05 and re-run,")
         print("  because entry setting is a weak proxy for care type.")
+
+    # ── person level: the only basis cohort D may be read from ─────────────
+    byp = defaultdict(list)
+    for r in rows:
+        byp[r["PATIENT_ID"]].append(r)
+    ever = Counter()
+    for pid, spells in byp.items():
+        if any(r["_adm"] for r in spells):
+            ever["placed on some spell"] += 1
+        elif any(r["_wait"] for r in spells):
+            ever["still waiting at end of follow-up"] += 1
+        elif any(r["_death"] and r["_last"] and (r["_death"] - r["_last"]).days <= window
+                 for r in spells):
+            ever["died, no placement observed"] += 1
+        else:
+            ever["no placement observed by end of follow-up"] += 1
+    first_no_later_yes = sum(
+        1 for spells in byp.values()
+        if not sorted(spells, key=lambda x: x["_entry"] or dt.date.min)[0]["_adm"]
+        and any(r["_adm"] for r in spells))
+    np_ = len(byp)
+    print(f"\nPERSON LEVEL — {np_:,} people, across every spell")
+    for k, v in ever.most_common():
+        print(f"  {k:42s} {v:7,}  {v/np_*100:5.1f}%")
+    print(f"  first spell unplaced but placed later      {first_no_later_yes:7,}  "
+          f"{first_no_later_yes/np_*100:5.1f}%  <- would be wrongly D on a spell basis")
+
+    # vintage check: does one admission appear on several spells of a transfer?
+    byt = defaultdict(list)
+    for r in rows:
+        if r["_adm"]:
+            byt[(r["PATIENT_ID"], r["PATIENT_TRANSFER_ID"])].append(r["_adm"])
+    shared = sum(1 for v in byt.values() if len(v) != len(set(v)))
+    if shared:
+        print(f"  NOTE: {shared:,} transfers carry the same admission on more than one spell.")
+        print( "  This file predates the bounded admission join in query 05; the spell-level")
+        print( "  PLACED count above is inflated. The person-level figures are unaffected.")
 
     # ── readiness ───────────────────────────────────────────────────────────
     if "WAS_APPROVED" in rows[0]:

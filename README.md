@@ -3,9 +3,18 @@
 Evidence base for the **Bethany Cochrane & Big Hill Lodge campus-of-care needs
 assessment**. Five fiscal years, FY2022–FY2026 (years ending 31 March).
 
-Everything here is reproducible from two SQL extracts and one cross-reference
-script. Every published figure traces to a numbered block in
+Everything here is reproducible from the SQL extracts and the two analysis
+scripts. Every published figure traces to a numbered block in
 `sql/01_demand_capacity_report.sql`.
+
+> **Status after review (2026-09-02).** A, B and C are **provisional**: they
+> rest on placed clients, where residency and destination are directly
+> observed, and are safe to quote as such. **Cohort D is not signed off** and
+> no A + C + D total may be quoted. Review found four logic problems in the
+> first cohort D pass; all four are corrected in the queries below, and
+> `sql/08_master_cohort.sql` now makes the A–D framework the controlling logic
+> rather than bolting D onto A/B/C afterwards. It has not yet been run against
+> the warehouse. See *Cohort D* for the findings and what remains.
 
 ---
 
@@ -212,30 +221,59 @@ Also worth carrying: of those who left without a placement, 83% had an
 `assess_approved_date` and were genuinely ready for a bed. The other 17% were
 still in process and were never waiting; they do not belong in cohort D.
 
-### Cohort D needs its own residency anchor
+### Four problems found in review, and what was done
 
-The province-wide spell run carries 52,877 people and residency for **1.2%** of
-them. That is not a gap in the extract — it is structural. A/B/C determine
-residence by anchoring on a person's **first-ever Type A/B admission**; cohort D
-is defined by never having been admitted. The anchor does not exist for them.
+Each was confirmed in the data before it was fixed.
 
-`sql/07_cohort_d_residency.sql` anchors on **list entry** instead — the first
-day the person appears on the waitlist, which is the same logical event one step
-earlier in the pathway. The three fiscal years before someone joins a waitlist
-cannot contain the facility they would later have been placed in, so the
-contamination protection is unchanged.
+| | Problem | Measured | Fix |
+|---|---|---|---|
+| 1 | Query 05 bounded the admission only from below, so a placement during a later spell was credited to every earlier spell of the same transfer | **2,890 spell rows wrongly marked placed**; 99.7% of those admissions belong to the later spell | Admission now bounded above by the next spell's entry (`spell_b` CTE) |
+| 2 | Query 07 classified a person with no registry match as *not a resident* — the unresolved branch could never fire because the GROUP BY always produced a row | Every unmatched person fell through to non-resident; D systematically understated | Two explicit UNRESOLVED classes: no registry record, and no address inside the lookback window. "Not a resident" now requires an address in the window that is somewhere else |
+| 3 | Cohort D was read from the first spell's exit reason, not the person's whole pathway | **4,598 people (8.7%)** show no placement on their first spell and were placed later | `ever_placed` / `first_placement_date` computed across all spells per person; 06 gained a person-level block |
+| 4 | A/C selected on placement-in-window, D on list-entry-in-window — different populations, and the bias understates unmet demand. The census also left-truncates: **1,604 people** were already on the list on day one | Anchor-agreement test (block V) was necessary but not sufficient | `sql/08_master_cohort.sql`: one demand event per person, residency read there, outcome read forward. `left_truncated` flag on every row so figures run with and without |
 
-**Different anchors mean A + C + D is not a legal sum until it is shown to be.**
-Block V of query 07 is that test: for the ~159 people who have both a placement
-and a waitlist record, it computes residency both ways and reports agreement.
-Run block V and read it before using anything else in that query. High agreement
-means the cohorts combine; low agreement means D is reported on its own, with
-the reason stated.
+### The controlling logic: one person-level demand cohort
+
+Each person's **demand event** is the earliest of their first Type A/B waitlist
+entry and their first Type A/B admission. Everyone has one — including the
+people who were never placed, which is what made D impossible under the
+admission anchor. Residency is read at that event; the outcome is read forward
+across everything observable.
+
+| Cohort | Cochrane resident at demand event | Placed by end of follow-up | Where |
+|---|---|---|---|
+| A | yes | yes | Cochrane |
+| B | no | yes | Cochrane |
+| C | yes | yes | outside |
+| D | yes | **no placement observed** | — |
+
+**Resident demand = A + C + D.** Use of Cochrane capacity = A + B, per
+admission, from query 01. Rated or preferred site is analysed separately
+(query 03) and never substituted for actual placement.
+
+**D means "no Type A/B placement observed by end of follow-up"**, not "never
+got a bed". It contains people still waiting on 2026-03-31, people who died
+waiting, people who withdrew, and people placed outside the data. `d_outcome`
+keeps those apart. Do not collapse them into one word in prose.
 
 **Cohort D is filtered on residency, not on who rated Cochrane.** Only 159 of
 the 317 placed Town residents ever rated a Cochrane site — about half. Building
-D from "people who asked for Cochrane" would miss roughly half of it and would
-select on willingness to ask rather than on where people live.
+D from Cochrane-raters would miss half of it and select on willingness to ask
+rather than on where people live.
+
+**Query 08 has not yet been run.** Its Block R reconciles against the published
+A/B/C; it will not match exactly, because the anchor moves earlier for anyone
+with a waitlist record, and the size and direction of that difference is
+itself something to report rather than adjust away.
+
+### Not to be used yet
+
+- any cohort D number
+- A + C + D as total Cochrane resident demand
+- the 11.4% "outcome unknown" as a final business category
+- any wait time derived from min-to-max census dates where people can re-enter
+- any statement of the form "X% of Cochrane demand was unmet" until censoring
+  and follow-up are handled by query 08
 
 ### Still open
 
@@ -259,8 +297,9 @@ sql/
   01_demand_capacity_report.sql   the report tables — every published figure
   02_client_level_detail.sql      one row per episode, for validation
   03_waitlist_rated_sites.sql     the waitlist census, for recorded preference
-  05_waitlist_spells.sql          cohort D — spells, exits, deaths
-  07_cohort_d_residency.sql       cohort D — residency from a list-entry anchor
+  05_waitlist_spells.sql          cohort D — spells, exits, deaths (corrected)
+  07_cohort_d_residency.sql       cohort D — list-entry residency, diagnostic (corrected)
+  08_master_cohort.sql            CONTROLLING: one demand event per person, A–D derived
 analysis/
   04_displacement_check.py        joins 02 and 03 — the 138-of-220 finding
   06_exit_classification.py       validates and classifies 05's output
@@ -331,11 +370,10 @@ Not blocking anything published, but each would strengthen the case:
    admissions per 1,000 seniors — benchmarkable against comparable Alberta
    communities and projectable against the town's growth. Single most useful
    number not yet in hand, and it needs no external request.
-2. **Waitlist history before 2021-04-01.** Cohort D is now measurable without
-   it (see above — exits are derived from admissions and vital statistics
-   rather than a closure-reason field, which does not exist in the source).
-   Earlier history would turn the 138 displacement floor into a count and
-   resolve the spells whose entry predates the census window.
+2. **Run query 08 and its Block R.** That is the gate on cohort D and on any
+   A + C + D total. Waitlist history before 2021-04-01 would additionally
+   resolve the 1,604 left-truncated people and turn the 138 displacement floor
+   into a count.
 3. **Confirm with ALA:** the meaning of `rating = 0` in the waitlist source,
    and the DAL → Type B crosswalk in writing.
 4. **An allocation question, deliberately unpublished.** 62% of Town residents

@@ -36,6 +36,24 @@
 --   3. It does not treat a person vanishing from the census as an exit. 39% of
 --      apparent disappearances continue under a new patient_transfer_id within
 --      90 days — the person did not leave, they were re-registered.
+--   4. It does not let one admission satisfy more than one spell. An earlier
+--      version bounded the admission only from below (>= list_entry), so a
+--      person who left, returned, and was then placed had the placement
+--      credited to BOTH spells: 2,890 spell rows wrongly marked placed. The
+--      admission is now bounded by the next spell's entry as well.
+--   5. It does not decide cohort D from a single spell. The spell-level
+--      exit_reason is a diagnostic. The person-level columns ever_placed and
+--      first_placement_date are what cohort D is read from — 8.7% of people
+--      show no placement on their first spell but were placed on a later one.
+--      Query 08 is the controlling person-level logic.
+--
+-- LEFT-TRUNCATION — READ BEFORE QUOTING ANY WAIT
+-- The census begins 2021-04-01. Anyone already on the list that day shows a
+-- list_entry of 2021-04-01 regardless of when they really joined: 1,604
+-- people. Their list_entry and days_observed understate the true wait, and an
+-- equivalent person who joined before the window and was never placed is
+-- invisible. The left_truncated flag marks them so every figure can be run
+-- with and without.
 -- ============================================================================
 with
 
@@ -129,11 +147,22 @@ spell as (
     group by 1,2,3,4
 ),
 
--- ── STEP 4 — THE LAST CENSUS IN THE EXTRACT ────────────────────────────────
+-- ── STEP 3b — WHERE THE NEXT SPELL OF THE SAME TRANSFER BEGINS ─────────────
+-- Used to bound the admission join from above. An admission that lands after
+-- the next spell has already started belongs to that spell, not this one.
+-- Bounding only from below credited one placement to every prior spell.
+spell_b as (
+    select s.*,
+           lead(list_entry) over (partition by patient_id, patient_transfer_id
+                                  order by spell_no)        as next_entry_same_transfer
+    from spell s
+),
+
+-- ── STEP 4 — THE FIRST AND LAST CENSUS IN THE EXTRACT ──────────────────────
 -- Anyone present on this date has not finished waiting. Their duration is
 -- censored, not zero, and they must stay in the denominator: dropping them
 -- measures only the people who got in, which biases every wait downward.
-last_census as (select max(census_date) as dt from wl),
+census_bounds as (select min(census_date) as first_dt, max(census_date) as last_dt from wl),
 
 -- ── STEP 5 — ATTACH PLACEMENT AND DEATH ────────────────────────────────────
 -- The admission join is on the episode key ONLY (patient_id +
@@ -142,8 +171,9 @@ last_census as (select max(census_date) as dt from wl),
 -- person can have more than one admission after the spell opened. Take the
 -- earliest of each — the first bed offered, the one death that matters.
 resolved as (
-    select s.*,
-           lc.dt                                  as last_census_date,
+    select s.* exclude (next_entry_same_transfer),
+           cb.last_dt                             as last_census_date,
+           iff(s.list_entry = cb.first_dt, 1, 0)  as left_truncated,
            b.admission_date::date                 as admission_date,
            b.admission_location,
            b.source_location,                     -- output only, never a join key
@@ -152,13 +182,17 @@ resolved as (
                                                   -- admissions table leaves every
                                                   -- never-placed person with no age
            v.dethdate::date                       as death_date,
-           iff(s.list_last_seen = lc.dt, 1, 0)    as still_waiting
-    from spell s
-    cross join last_census lc
+           iff(s.list_last_seen = cb.last_dt, 1, 0) as still_waiting
+    from spell_b s
+    cross join census_bounds cb
     left join db_source_strata_health_pathways.raw.admissions b
            on b.patient_id          = s.patient_id
           and b.patient_transfer_id = s.patient_transfer_id
           and b.admission_date::date >= s.list_entry
+          -- bounded from ABOVE by the next spell of this transfer, so one
+          -- admission can satisfy exactly one spell. Open-ended on the final
+          -- spell: the placement normally lands after the last census day.
+          and b.admission_date::date <  coalesce(s.next_entry_same_transfer, '9999-12-31'::date)
     left join db_source_strata_health_pathways.raw.patient p
            on p.id = s.patient_id
     left join db_source_ah_vital_stats.curated.tb_vital_stats_deaths_adhoc v
@@ -186,6 +220,15 @@ continued as (
 -- Order matters. Placement and death outrank re-registration; a resolved
 -- outcome is never overwritten by evidence that the person also reappeared.
 select c.* exclude (next_spell_entry, next_spell_transfer),
+
+       -- PERSON-LEVEL OUTCOME. Cohort D is read from these, never from the
+       -- spell-level exit_reason below. "Did this person ever receive a
+       -- placement across every spell we can see" is the question; "what
+       -- happened at the end of their first spell" is not.
+       max(iff(c.admission_date is not null, 1, 0))
+           over (partition by c.patient_id)                              as ever_placed,
+       min(c.admission_date) over (partition by c.patient_id)            as first_placement_date,
+       max(c.still_waiting) over (partition by c.patient_id)             as still_waiting_any_spell,
 
        iff(c.admission_date is not null,
            datediff('day', c.list_entry, c.admission_date), null)     as days_to_list_placement,

@@ -1,6 +1,19 @@
 -- ============================================================================
 -- COHORT D — RESIDENCY FOR PEOPLE WHO WERE NEVER PLACED
 --
+-- STATUS: diagnostic. Query 08 is the controlling logic for A/B/C/D and is
+-- what the report reads from. This query is kept because it isolates the
+-- list-entry residency anchor so it can be tested on its own (block V).
+--
+-- TWO CORRECTIONS FROM REVIEW
+--   · Missing registry information is now UNRESOLVED, never "not a resident".
+--     The earlier version's unresolved branch could not fire — the GROUP BY
+--     always produced a row — so every unmatched person fell through to
+--     non-resident and cohort D was systematically understated.
+--   · The person's outcome is read across every spell (ever_placed from
+--     query 05), not from the first spell's exit_reason. 8.7% of people show
+--     no placement on their first spell and were placed on a later one.
+--
 -- THE PROBLEM THIS SOLVES
 -- Queries 01 and 02 determine residence by anchoring on a person's first-ever
 -- Type A/B admission and reading the provincial registry for the three fiscal
@@ -68,9 +81,14 @@ spells as (
 anchor as (
     select phn,
            min(list_entry)                                    as first_list_entry,
-           min_by(care_stream,    list_entry)                 as care_stream_at_entry,
+           min_by(care_stream,       list_entry)              as care_stream_at_entry,
            min_by(location_at_entry, list_entry)              as setting_at_entry,
-           min_by(exit_reason,    list_entry)                 as first_exit_reason
+           max(left_truncated)                                as left_truncated,
+           -- PERSON-LEVEL, across every spell. Never the first spell's exit.
+           max(ever_placed)                                   as ever_placed,
+           min(first_placement_date)                          as first_placement_date,
+           max(still_waiting_any_spell)                       as still_waiting,
+           max(iff(exit_reason = 'DIED WAITING', 1, 0))        as died_waiting_any_spell
     from spells
     where phn is not null
     group by phn
@@ -107,7 +125,11 @@ residency as (
                    and g.fye between b.entry_fye - 3 and b.entry_fye - 1, 1, 0)) as town_3yr,
            max(iff(g.in_area = 1
                    and g.fye between b.entry_fye - 3 and b.entry_fye - 1, 1, 0)) as area_3yr,
-           count(distinct g.fye)                                                 as n_registry_fye
+           count(distinct g.fye)                                                 as n_registry_fye,
+           -- years of address INSIDE the lookback window. Zero here means the
+           -- test could not be run, which is not the same as failing it.
+           count(distinct iff(g.fye between b.entry_fye - 3 and b.entry_fye - 1,
+                              g.fye, null))                                      as n_window_fye
     from based b
     left join geo g on g.phn = b.phn
     group by b.phn
@@ -118,10 +140,16 @@ cohort_d as (
            coalesce(r.town_3yr, 0)                            as town_3yr,
            coalesce(r.area_3yr, 0)                            as area_3yr,
            coalesce(r.n_registry_fye, 0)                      as n_registry_fye,
-           case when coalesce(r.town_3yr,0) = 1 then 'Town of Cochrane'
-                when coalesce(r.area_3yr,0) = 1 then 'Cochrane catchment'
-                when r.phn is null              then 'UNRESOLVED - no registry match'
-                else                                 'Not a Cochrane-area resident' end as residency,
+           coalesce(r.n_window_fye, 0)                        as n_window_fye,
+           -- A verdict of "not a resident" requires an address IN THE WINDOW
+           -- that is somewhere else. No registry record, or a record with no
+           -- address in the three lookback years, is UNRESOLVED. Treating
+           -- either as non-resident silently shrinks cohort D.
+           case when coalesce(r.town_3yr,0) = 1         then 'Town of Cochrane'
+                when coalesce(r.area_3yr,0) = 1         then 'Cochrane catchment'
+                when coalesce(r.n_registry_fye,0) = 0   then 'UNRESOLVED - no registry record'
+                when coalesce(r.n_window_fye,0)   = 0   then 'UNRESOLVED - no address in lookback window'
+                else                                         'Not a Cochrane-area resident' end as residency,
            case when coalesce(r.n_registry_fye,0) >= 10 then 'HIGH'
                 when coalesce(r.n_registry_fye,0) >=  5 then 'MEDIUM'
                 else                                        'LOW'  end             as confidence
@@ -138,7 +166,10 @@ select * from (
 --    Cochrane residents needed residential care and never received a bed.
 select 'D1. COHORT D by residency and outcome'      as section,
        residency                                    as row_label,
-       first_exit_reason                            as col_label,
+       case when ever_placed = 1            then 'placed (any spell)'
+            when still_waiting = 1          then 'still waiting at end of follow-up'
+            when died_waiting_any_spell = 1 then 'died, no placement observed'
+            else 'no placement observed by end of follow-up' end as col_label,
        count(*)                                     as n_people,
        round(100.0*count(*)/sum(count(*)) over (partition by residency),1) as pct
 from cohort_d
@@ -149,13 +180,10 @@ group by 1,2,3
 --    served; adding D gives total local need. LEGAL ONLY IF BLOCK V PASSES.
 union all
 select 'D2. Total Town demand (A + C + D)', 'Town of Cochrane',
-       case when first_exit_reason in ('PLACED','PLACED, died later in care')
-              then 'placed (cohorts A + C)'
-            when first_exit_reason = 'STILL WAITING (censored)'
-              then 'still waiting'
-            when first_exit_reason = 'DIED WAITING'
-              then 'died without ever being placed'
-            else 'left the list without a placement' end,
+       case when ever_placed = 1            then 'placed (cohorts A + C)'
+            when still_waiting = 1          then 'still waiting (censored)'
+            when died_waiting_any_spell = 1 then 'died, no placement observed'
+            else 'no placement observed by end of follow-up' end,
        count(*), round(100.0*count(*)/sum(count(*)) over (),1)
 from cohort_d
 where residency = 'Town of Cochrane'
@@ -182,7 +210,7 @@ select 'D3. Setting at list entry (Town residents)',
               or upper(setting_at_entry) like '%REHAB%'                              then 'Transition / rehab'
             when upper(setting_at_entry) like '%LTC%'                                then 'Other continuing care'
             else 'Other / unclear' end,
-       first_exit_reason, count(*),
+       iff(ever_placed = 1, 'placed', 'no placement observed'), count(*),
        round(100.0*count(*)/sum(count(*)) over (),1)
 from cohort_d
 where residency = 'Town of Cochrane' and care_stream_at_entry in ('Type A','Type B')
