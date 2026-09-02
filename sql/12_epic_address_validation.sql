@@ -19,12 +19,60 @@
 --     geography as Registry and Strata, never from CITY_HX.
 -- ============================================================================
 
+-- ── 0. DIAGNOSTICS — RUN THESE FIRST, EACH ONE ALWAYS RETURNS ROWS ─────────
+-- 0a. what is actually in the two tables
+describe table db_source_epic_clarity.raw.pat_addr_chng_hx;
+describe table db_source_epic_clarity.raw.identity_id;
+
+-- 0b. identity-type census: which types exist, how many patients each, and
+--     what the values look like. 221 should be 9-digit and near-universal.
+select identity_type_id, count(*) as rows_, count(distinct pat_id) as patients,
+       min(identity_id) as sample_min, max(identity_id) as sample_max,
+       round(avg(length(regexp_replace(identity_id::string,'[^0-9]',''))),1) as avg_digits
+from db_source_epic_clarity.raw.identity_id
+group by 1 order by 2 desc limit 20;
+
+-- 0c. EPIC COVERAGE OF THE COHORT. The decisive number: how many of the
+--     people on a Type A/B waitlist in the window exist in Epic at all under
+--     type 221? If a 2021 client has no Epic identity, Epic cannot help with
+--     them regardless of address dates.
+with cohort_phn as (
+    select distinct regexp_replace(phn::string,'[^0-9]','') as phn
+    from db_team_continuing_seniors_care.calgary_bi.ts_waitlist_trend_with_ratings_1671
+    where census_date >= '2021-04-01' and census_date < '2026-04-01'
+      and trim(care_type) in ('CAL - Long Term Care','EDM - LTC','CAL - Supportive Living Level 4 (DAL)',
+                              'CAL - Supportive Living Level 4 Dementia (DAL)','EDM - DSL4 / DSL4D')
+    qualify length(phn) = 9 and phn <> '000000000'
+),
+epic_phn as (
+    select distinct regexp_replace(identity_id::string,'[^0-9]','') as phn
+    from db_source_epic_clarity.raw.identity_id where identity_type_id = '221'
+)
+select count(*)                                    as cohort_people,
+       count_if(e.phn is not null)                 as in_epic_identity,
+       round(100.0*count_if(e.phn is not null)/count(*),1) as pct_in_epic,
+       count_if(e.phn is not null and exists (select 1 from db_source_epic_clarity.raw.pat_addr_chng_hx a
+                                              join db_source_epic_clarity.raw.identity_id b on b.pat_id = a.pat_id
+                                              where b.identity_type_id='221'
+                                                and regexp_replace(b.identity_id::string,'[^0-9]','') = c.phn)) as with_any_address_row
+from cohort_phn c left join epic_phn e on e.phn = c.phn;
+
+-- 0d. THE CONTROL PHN, SEARCHED EVERY WAY. If this returns nothing the person
+--     is not in Epic under any identity type or format — which is a coverage
+--     finding, not a join failure.
+select identity_type_id, identity_id, pat_id
+from db_source_epic_clarity.raw.identity_id
+where regexp_replace(identity_id::string,'[^0-9]','') = '498338261'
+   or identity_id::string like '%49833%8261%';
+
 -- ── 1. IS IDENTITY_TYPE_ID 221 THE PHN? PHN QUALITY AND UNIQUENESS ─────────
--- The identity-type dimension names the type. Confirm 221 = Alberta PHN /
--- ULI before trusting the join.
-select id_type_name, identity_type_id
-from db_source_epic_clarity.raw.identity_id_type            -- CONFIRM table name in this Clarity build
-where identity_type_id in ('221');
+-- Block 0b shows the values. Type 221 is the PHN if its values are 9-digit
+-- and one per patient; the dimension table naming it varies by Clarity
+-- build (IDENTITY_ID_TYPE.ID_TYPE / ID_TYPE_NAME in most), so look it up
+-- with information_schema rather than a guessed name:
+select table_name, column_name
+from db_source_epic_clarity.information_schema.columns
+where table_schema = 'RAW' and table_name ilike '%IDENTITY%TYPE%';
 
 -- digit-length quality of identity_id under type 221 (count BEFORE any padding)
 select case when d = 0 then '0 digits' when d between 1 and 8 then '1-8 digits'
