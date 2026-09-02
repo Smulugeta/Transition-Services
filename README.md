@@ -7,25 +7,24 @@ Everything here is reproducible from the SQL extracts and the two analysis
 scripts. Every published figure traces to a numbered block in
 `sql/01_demand_capacity_report.sql`.
 
-> **Status (2026-09-02, fifth review — seven gates).** Definitions: *new Type A/B demand
-> arising FY2022–FY2026*; residency = registry latest pre-demand address, else
-> the Strata address effective at demand; B = any non-Town resident placed in
-> Cochrane. **With Strata: A 89 · B 148 · C 192 · D 69 (13 still waiting / 25
-> died / 31 exited); resident demand 350.** Registry-only, which the reviewer
-> accepted for A, C and resident demand: 87 / 143 / 191 / 68 = 346. Strata
-> resolved 430 of 524 registry-unresolved people (423 not Cochrane, 4 Town, 3
-> catchment) and cut the mathematical maximum on D from 181 to 84. All
-> eighteen integrity checks pass on the 33,002-person universe. The reviewer accepted
-> those as mechanically reproduced and set seven gates. Three are closed from
-> local data (Surrey proof; fallback = evidence only; B = non-Town = 148). Two
-> found real defects, fixed in `sql/09` rev 2.6: the facility guard blocked
-> apartment units held by successive tenants (7 of the 15 remaining unresolved
-> were blocked by it alone) and now uses concurrent occupancy; and `LPAD`
-> silently truncated identifiers longer than nine digits, so digits are now
-> counted before any padding. Two need the rev 2.6 run: the approval-date
-> precedence sensitivity (preview: 1% of demand dates move, all later) and the
-> count of people with more than one Strata address active at demand. **Not
-> final sign-off until gate 1 is known.** Every figure and correction is in
+> **Status (2026-09-02, rev 2.7 run — all seven gates closed).** Definitions:
+> *new Type A/B demand arising FY2022–FY2026*; residency = registry latest
+> pre-demand address, else the Strata address effective at demand; B = any
+> non-Town resident placed in Cochrane. **Headline: A 89 · B 148 · C 192 · D 69
+> (13 still waiting / 25 died / 31 exited); resident demand 350.** It is
+> robust to every sensitivity the reviewer asked for: registry-only 346;
+> approval-date precedence **no change** (259 dates move, all later, none in a
+> cohort); the published any-three-year rule 372; Epic address history 352
+> (sensitivity only). All twenty-one integrity checks pass on the
+> 33,046-person universe. Strata resolves 444 of 525 registry-unresolved
+> people; 11 approved-unplaced people remain unresolved under every source,
+> so the mathematical maximum on D is 80. **Epic is validated and not
+> promoted**: 19% of its addresses at the demand event are facilities, and on
+> the Town-relevant cells it disagrees with the registry for a third of the
+> people where either says Town. Outside the data: the consultant's
+> confirmation of B = non-Town, and ALA's facility reference table (3 of the
+> 11 are blocked only by the guard). Everything is in
+> `reference/master_cohort_run_2026-09-02.md`. Every figure and correction is in
 > `reference/master_cohort_run_2026-09-02.md`.
 > The word "province-wide" is **withdrawn permanently for this source**:
 > `sql/10_coverage_checks.sql` has been run and the admissions source is the
@@ -499,11 +498,9 @@ Not blocking anything published, but each would strengthen the case:
    admissions per 1,000 seniors — benchmarkable against comparable Alberta
    communities and projectable against the town's growth. Single most useful
    number not yet in hand, and it needs no external request.
-2. **Run `sql/09` rev 2.7 and the checker** — it closes gates 1, 2, 4 and 5,
-   fills the approval-precedence column of the final table, and reports the
-   Epic validation as sensitivity. Report back `sql/11` blocks A1, A2, E and G
-   and `sql/12` blocks 1, 2, 7 and the control. Still for ALA (a facility
-   reference table is now the most useful of these): a Central-zone source; the Retired-DAL/DEL codes; which approval
+2. **Reviewer's final pass** on the rev 2.7 run record. Then the consultant
+   confirms B = non-Town. Still for ALA (a facility reference table is now
+   the most useful of these — it would resolve 3 of the 11 remaining): a Central-zone source; the Retired-DAL/DEL codes; which approval
    field is operational. Waitlist history before 2021-04-01 would additionally
    resolve the 1,604 left-truncated people and turn the 138 displacement floor
    into a count.

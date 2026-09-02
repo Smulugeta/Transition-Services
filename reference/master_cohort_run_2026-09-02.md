@@ -1,15 +1,18 @@
 # Master cohort — runs of 2026-09-02
 
-Output of `sql/09_master_cohort_standalone.sql` **rev 2.5** (full audit
-universe, 33,002 people, Strata `address_h` as secondary residency source),
-validated by `analysis/07_master_cohort_check.py` **rev 5**. **All eighteen
-integrity checks pass**, including the five that enforce the Strata rules.
-That is a data-integrity result, not a methodological sign-off.
+Output of `sql/09_master_cohort_standalone.sql` **rev 2.7** (full audit
+universe, 33,046 people — 44 of them admitted only under the approval-
+precedence anchor), validated by `analysis/07_master_cohort_check.py`
+**rev 7**. **All twenty-one integrity checks pass**, including the five that
+enforce the Strata rules, the two that gate the alternative anchor, and the
+two that keep Epic out of production. That is a data-integrity result, not a
+methodological sign-off.
 
-Runs so far: rev 2.1 (1,139 rows), 2.2 (653), 2.3 (33,003), 2.5 (33,002 — the
-all-zero PHN is now rejected). The checker recomputes every cohort from
-residency × placement × location and compares it with the SQL's own column;
-the two agree for all 33,002 people.
+Runs so far: rev 2.1 (1,139 rows), 2.2 (653), 2.3 (33,003), 2.5 (33,002),
+2.7 (33,046). The checker recomputes every cohort — primary, registry-only,
+any-3-year, approval-precedence and Epic-sensitivity — from residency ×
+placement × location and compares each with the SQL's own column; all agree
+for every person.
 
 ## Reviewer decisions adopted (third review)
 
@@ -213,49 +216,85 @@ and set seven gates. Status, with what each needs:
 
 | Gate | Status | Finding |
 |---|---|---|
-| **1 Approval precedence** | **open — needs rev 2.6 run** | Current: `min` over rows of `coalesce(assess, calculated)`. Alternative: `coalesce(min(assess), min(calculated))` per person. Preview on the 777-person Cochrane-rated extract: **8 demand dates change (1.0%), all later; 5 cross a fiscal year; 2 enter or leave the window.** Rev 2.6 carries both anchors end to end — residency, Strata, placement and cohort at each — and the checker prints the five counts and the exact A/B/C/D impact. **89 / 148 / 192 / 69 are not signed off until it runs.** |
-| **2 Active addresses at demand** | open — needs rev 2.6 run | Rev 2.6 outputs `strata_n_active_at_demand` and `strata_active_classes_disagree`; the checker reports how many people had more than one active version, whether they disagree on class, and which cohort assignments the latest-`effective_from` tiebreak could touch. `sql/11` block A2 is the standalone form. |
+| **1 Approval precedence** | **closed — zero impact** | Row-level `min(coalesce(assess, calculated))` vs person-level `coalesce(min(assess), min(calculated))`, both carried end to end. Across 33,046 people: **259 demand dates change (0.8%), every one later; 133 cross a fiscal year; 44 enter the window, 3 leave; 2 residency classes change. A / B / C / D and resident demand: 89 / 148 / 192 / 69 = 350 under both anchors — no person moves cohort.** The people the precedence rule touches are all outside the Cochrane-relevant population. |
+| **2 Active addresses at demand** | **closed — tiebreak is moot** | Of 444 people Strata resolved, 442 had exactly one address version active on the demand date and 2 had two; the two competing pairs **agree on class**. No cohort assignment depends on the latest-`effective_from` tiebreak. |
 | **3 Surrey proof** | **proven** | PHN 49833-8261: demand 2021-06-01; registry UNRESOLVED → Strata `3288 156A ST, Surrey, V3Z 9T1` effective 2021-05-18 → not Cochrane → `residency_source = STRATA_ADDRESS_H`. |
-| **4 Facility audit** | **guard was wrong; fixed in rev 2.6** | The 48 blocked split 3: 17 · 4: 7 · 5: 2 · 6–19: 16 · 35–744: 6. The 3–5 tier (26 addresses) is **apartment units, not facilities** — `403-18 Hebert Road`, `353-5149 Mullen Road`, `304-9310 211 Street` — held by three or four *successive* tenants across the decades `address_h` covers. **7 of the 15 remaining unresolved were unresolved solely because of the guard**, six of them at such units and one at `NO FIXED ADDRESS` (80 people). Rev 2.6 replaces ever-shared with **concurrent occupancy on the demand date** (≥ 3 distinct people holding the address that day) and gives placeholder strings their own never-classified class. A facility reference table confirmed by ALA would be better than any threshold; `sql/11` block E lists candidates by peak concurrent occupancy. |
-| **5 Raw PHN before LPAD** | **real bug; fixed in rev 2.6** | Snowflake `LPAD(x, 9)` **truncates** a string longer than 9, so a 10-digit identifier silently became its first nine digits. Rev 2.6 counts digits first and accepts only exactly nine, in the patient, waitlist and death paths, with no padding. `sql/11` block G counts 0 / 1–8 / 9 / >9-digit identifiers in all three sources. |
+| **4 Facility audit** | **rebuilt and run** | The ever-shared guard blocked 48, mostly apartment units held by successive tenants. On **concurrent occupancy on the demand date** it blocks **28** (3: 14 · 4: 3 · 6–38: 10 · 513: 1), with **15 placeholder addresses** (NO FIXED ADDRESS, EVACUEE) in their own class. It released 14 apartment-unit cases, which Strata then resolved: 430 → **444** resolutions, 15 → **11** remaining unresolved. The 3–5 tier still holds 17 entries and some are multi-person *households*, not facilities — three people at `2122-78C McKenney Avenue` on the same day, four at `331 21 Auburn Bay St SE` — alongside a real one, `McKenzie Towne Retirement Residence` (n=4). **3 of the 11 remaining are unresolved solely because of the guard.** A facility reference table confirmed by ALA would resolve them and is preferable to any threshold; `sql/11` block E lists candidates. |
+| **5 Raw PHN before LPAD** | **fixed and run** | Snowflake `LPAD(x, 9)` truncates a string longer than 9. Rev 2.6+ counts digits first and accepts only exactly nine, with no padding, in the patient, waitlist and death paths. Universe: 0 placeholder or malformed PHNs; 1 death-before-demand record, flagged and in no cohort. Epic's own identities are all exactly nine digits (check 1). |
 | **6 Fallback = evidence only** | confirmed | Unchanged since rev 2.4; nothing is removed from the uncertainty pool by a fallback address. |
 | **7 B = non-Town** | confirmed | B = 148 with `b_catchment` kept (6). |
 
-## Final validation table (rev 2.5 data; approval-precedence column pending rev 2.6)
+## Final validation table — rev 2.7, all columns run
 
-| | Registry only | Registry + Strata | Approval precedence | Any-3-year sensitivity |
-|---|---|---|---|---|
-| A resident, placed in Cochrane | 87 | **89** | — | 90 |
-| B non-Town, placed in Cochrane | 143 | **148** | — | 140 |
-| C resident, placed outside | 191 | **192** | — | 208 |
-| D resident, no placement in source | 68 | **69** | — | 74 |
-| Resident demand A + C + D | 346 | **350** | — | 372 |
-| Unresolved, approved, unplaced | 113 | **15** | — | — |
-| D mathematical maximum | 181 | **84** | — | — |
+| | Registry only | **Registry + Strata (production)** | Approval precedence | Any-3-year sensitivity | Epic sensitivity |
+|---|---|---|---|---|---|
+| A resident, placed in Cochrane | 87 | **89** | 89 | 90 | 90 |
+| B non-Town, placed in Cochrane | 143 | **148** | 148 | 140 | 149 |
+| C resident, placed outside | 191 | **192** | 192 | 208 | 193 |
+| D resident, no placement in source | 68 | **69** | 69 | 74 | 69 |
+| Resident demand A + C + D | 346 | **350** | 350 | 372 | 352 |
+| Unresolved, approved, unplaced | 113 | **11** | 11 | — | 8 |
+| D mathematical maximum | 181 | **80** | 80 | — | 77 |
 
-### The 15 remaining unresolved, approved, unplaced (PHN masked)
+B = any non-Town resident placed in Cochrane, `b_catchment` = 6 kept.
+Fallback registry addresses are evidence only.
 
-| PHN | Demand | Registry | Strata | D class |
-|---|---|---|---|---|
-| …8002 | 2021-11-30 | no registry record | no Strata row | D3 |
-| …5102 | 2022-02-10 | no registry record | no Strata row | D3 |
-| …2811 | 2022-02-16 | record, no year in lookback | no Strata row | D2 |
-| …4641 | 2022-02-17 | record, no year in lookback | facility guard (apartment, n=4) | D2 |
-| …3271 | 2022-09-15 | no registry record | no Strata row | D3 |
-| …6920 | 2022-09-22 | record, no year in lookback | no Strata row | D2 |
-| …3831 | 2022-11-04 | record, no year in lookback | facility guard (apartment, n=4) | D2 |
-| …3100 | 2022-12-21 | record, no year in lookback | no Strata row | D2 |
-| …3100 | 2022-12-21 | record, no year in lookback | no Strata row | D3 |
-| …6131 | 2023-11-20 | record, no year in lookback | address, no postal code | D2 |
-| …8612 | 2025-08-15 | no registry record | facility guard (apartment, n=3) | D3 |
-| …0812 | 2025-10-10 | no registry record | facility guard (apartment, n=3) | D3 |
-| …4912 | 2025-12-02 | no registry record | facility guard (apartment, n=3) | D1 |
-| …1330 | 2026-02-18 | record, no year in lookback | NO FIXED ADDRESS (n=80) | D1 |
-| …0812 | 2026-03-13 | no registry record | facility guard (apartment, n=3) | D1 |
+### The 11 remaining unresolved, approved, unplaced (PHN masked)
 
-Under rev 2.6's concurrent-occupancy rule, the six apartment-unit cases will
-resolve from their Strata address; the placeholder stays unresolved by design.
-Expect the remaining count to fall to about 9.
+| PHN | Demand | Registry | Strata | Epic (sensitivity) | D class |
+|---|---|---|---|---|---|
+| …8002 | 2021-11-30 | no registry record | no Strata row | — | D3 |
+| …5102 | 2022-02-10 | no registry record | no Strata row | — | D3 |
+| …2811 | 2022-02-16 | record, no year in lookback | no Strata row | — | D2 |
+| …3271 | 2022-09-15 | no registry record | no Strata row | — | D3 |
+| …6920 | 2022-09-22 | record, no year in lookback | no Strata row | — | D2 |
+| …3831 | 2022-11-04 | record, no year in lookback | facility guard (household, n=3) | — | D2 |
+| …3100 | 2022-12-21 | record, no year in lookback | no Strata row | — | D2 |
+| …3100 | 2022-12-21 | record, no year in lookback | no Strata row | — | D3 |
+| …6131 | 2023-11-20 | record, no year in lookback | address, no postal code | — | D2 |
+| …8612 | 2025-08-15 | no registry record | facility guard (household, n=3) | — | D3 |
+| …1330 | 2026-02-18 | record, no year in lookback | NO FIXED ADDRESS (placeholder) | — | D1 |
+
+Epic (sensitivity only) classifies 3 of the 11 as not Cochrane and 0 as Town;
+8 stay unresolved under every source.
+
+## Epic / Connect Care — validation complete; recommendation: do not promote
+
+| Check | Result |
+|---|---|
+| 1 PHN identity | 221 is the PHN: 9,384,709 identities, all 9 digits, one per patient, one patient per PHN, zero placeholders |
+| 2 Dates | Real event dates: 92.8% of 27.4M rows start before 2026, 43.4% before the window; 3 rows carry the source maximum. Caveat: 4.7M rows (17%) start on the 2019-08-16/17 conversion; only 53 of the cohort's active-at-demand rows rest on one |
+| 3–4 Active at demand | 33,001 approved people: **32,934 have exactly one active address, 67 have none, 0 have more than one** |
+| 5 Conflicts | none possible — no multiples |
+| 6 Geography | mapped through the same postal table; never `CITY_HX` |
+| 7 Guards | **6,370 facility addresses (19% of the cohort), 1,043 PO Boxes, 23 placeholders** — not used |
+| 8 Agreement with Registry | 25,111 people with both. Overall **99.6%**, but that is the non-Town / non-Town cell (24,784). **On the Town-relevant cells: Registry Town / Epic Town 221 · Registry Town / Epic non-Town 41 · Registry non-Town / Epic Town 65.** Where either source says Town, they disagree for 106 of 327 people (32%). |
+| 9–10 The 11 remaining | Epic: 0 Town, 0 catchment, 3 not Cochrane, 8 still unresolved |
+| 11 Sensitivity cohort | A +1, B +1, C +1, D +0 — resident demand 352 against 350 |
+| Control 49833-8261 | **Not in Epic** — no active address on 2021-06-01, so Epic cannot corroborate or contradict Strata's Surrey verdict |
+
+**Why not promote.** Epic's address at the demand event is the facility or
+hospital the person was in for 19% of the cohort — the approval date is
+exactly when many people are in an acute bed — so the guard is doing heavy
+work and the residual risk is that a sub-threshold facility passes as a home.
+On the cells that matter for Cochrane, Epic and Registry disagree for a third
+of the people where either says Town; 65 people Registry calls non-Town would
+become Town under Epic, which would inflate resident demand with no way to
+adjudicate. And it resolves none of the 11 remaining to Town. Epic is a
+validated source that adds +1 / +1 / +1 as sensitivity and nothing the
+analysis needs. Keep it as sensitivity; report the 352 alongside 350.
+
+## Sign-off state after the rev 2.7 run
+
+- **89 / 148 / 192 / 69 — resident demand 350 — is robust** to: the Strata
+  secondary source (+2 / +5 / +1 / +1 over registry-only), approval-date
+  precedence (no change), Epic (+1 / +1 / +1 / 0 as sensitivity), and the
+  published any-three-year residency rule (372).
+- Residency uncertainty around D: 11 unresolved approved-unplaced people;
+  mathematical maximum 80. Three of the 11 are blocked only by the facility
+  guard and would resolve against a confirmed facility table.
+- Still to decide outside the data: the consultant's confirmation that B
+  means non-Town (148), and ALA's facility reference table.
 
 ## Status
 
