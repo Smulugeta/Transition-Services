@@ -2,6 +2,17 @@
 """
 Validate and tabulate the master demand cohort (output of sql/09, rev 2.3).
 
+Revision 5 (Strata address history as a secondary residency source):
+  - Cohorts recomputed on RESIDENCY_FINAL (registry, else Strata address
+    active at demand); COHORT_REGISTRY_ONLY kept so Strata's effect is shown.
+  - Rule-10 report: previously unresolved people resolved by Strata, their
+    Town / catchment / non-Town split, the unplaced subset, the change to
+    A/B/C/D, and the remaining unresolved.
+  - Integrity: Strata used only where the registry was unresolved; no Strata
+    address effective after the demand date; facility addresses never
+    classified; cohort consistent with residency_final.
+  - Facility-guard, creation-date and out-of-province counts reported.
+
 Revision 4 after fourth review:
   - Hard checks: placeholder / malformed PHN inside A-D = 0; death before
     demand inside A-D = 0. Both are also counted across the universe.
@@ -69,6 +80,10 @@ def load(path):
         r["_app"]  = col(r,"WAS_APPROVED","1") == "1"
         r["_inc"]  = col(r,"FIRST_PLACEMENT_IN_COCHRANE","0") == "1"
         r["_resA"] = col(r,"RESIDENCY_ANY3");  r["_resL"] = col(r,"RESIDENCY_LATEST")
+        r["_resFin"] = col(r,"RESIDENCY_FINAL") or r["_resL"]      # rev 2.5: registry, else Strata
+        r["_src"]  = col(r,"RESIDENCY_SOURCE") or ("REGISTRY" if r["_resL"] != UNRES else "UNRESOLVED")
+        r["_strat"] = col(r,"STRATA_RESIDENCY") or None
+        r["_seff"]  = day(col(r,"STRATA_EFFECTIVE_FROM"))
         r["_resF"] = col(r,"RESIDENCY_FALLBACK") or None
         r["_dcls"] = col(r,"D_CLASS")
         r["_sqlcoh"] = col(r,"COHORT") or None
@@ -79,7 +94,8 @@ def load(path):
         r["_depth"] = col(r,"REGISTRY_HISTORY_DEPTH") or col(r,"CONFIDENCE")
         r["_evid"]  = col(r,"RESIDENCY_EVIDENCE")
     for r in rows:
-        r["_coh"]  = cohort_of(r, r["_resL"])          # PRIMARY, recomputed, B = non-Town
+        r["_coh"]  = cohort_of(r, r["_resFin"])        # PRIMARY, recomputed on residency_final, B = non-Town
+        r["_cohR"] = cohort_of(r, r["_resL"])          # registry only
         r["_cohA"] = cohort_of(r, r["_resA"])          # SENSITIVITY, recomputed
     return rows
 
@@ -87,13 +103,14 @@ def load(path):
 def integrity(rows):
     print("1. INTEGRITY — the script stops if any of these fail")
     n = len(rows)
-    has_any3 = "COHORT_ANY3" in rows[0]; has_b24 = "B_CATCHMENT" in rows[0]
-    # which rule did the SQL use for COHORT?  rev>=2.4: latest + non-Town B;
-    # rev 2.3: latest + non-area B; earlier: any3 + non-area B
-    if has_b24:   expect = lambda r: r["_coh"]
+    has_any3 = "COHORT_ANY3" in rows[0]; has_b24 = "B_CATCHMENT" in rows[0]; has_25 = "RESIDENCY_FINAL" in rows[0]
+    # which rule did the SQL use for COHORT?  rev>=2.5: residency_final + non-Town B;
+    # rev 2.4: latest + non-Town B; rev 2.3: latest + non-area B; earlier: any3 + non-area B
+    if has_25:    expect = lambda r: r["_coh"]
+    elif has_b24: expect = lambda r: r["_cohR"]
     elif has_any3: expect = lambda r: cohort_of(r, r["_resL"], "nonarea")
     else:          expect = lambda r: cohort_of(r, r["_resA"], "nonarea")
-    sql_rule = "rev2.4 rule" if has_b24 else "rev2.3 rule" if has_any3 else "rev<=2.2 rule"
+    sql_rule = "rev2.5 rule" if has_25 else "rev2.4 rule" if has_b24 else "rev2.3 rule" if has_any3 else "rev<=2.2 rule"
     mismatch = sum(1 for r in rows if (r["_sqlcoh"] or None) != (expect(r) or None))
     checks = [
         ("duplicate PHNs (one row per person)", n - len({r["_phn"] for r in rows})),
@@ -112,6 +129,14 @@ def integrity(rows):
         ("cohort A/B but first placement not in Cochrane", sum(1 for r in rows if r["_coh"] in ("A","B") and not r["_inc"])),
         ("D1 (still waiting) but not on list at follow-up",
                                                sum(1 for r in rows if r["_dcls"].startswith("D1") and col(r,"ON_LIST_AT_FOLLOWUP","0")!="1")),
+        ("Strata used where the registry had a verdict (rule 1)",
+                                               sum(1 for r in rows if r["_src"]=="STRATA_ADDRESS_H" and r["_resL"]!=UNRES)),
+        ("Strata address effective AFTER the demand date used (rule 8)",
+                                               sum(1 for r in rows if r["_src"]=="STRATA_ADDRESS_H" and r["_seff"] and r["_seff"] > r["_dem"])),
+        ("facility address used to classify residency",
+                                               sum(1 for r in rows if r["_src"]=="STRATA_ADDRESS_H" and col(r,"STRATA_ADDRESS_IS_FACILITY","0")=="1")),
+        ("residency_final not in {registry verdict, strata verdict, UNRESOLVED}",
+                                               sum(1 for r in rows if has_25 and r["_resFin"] not in (r["_resL"], r["_strat"] or "", UNRES))),
     ]
     bad = 0
     for label, c in checks:
@@ -158,9 +183,9 @@ def uncertainty(rows, cP):
     print(f"   known Town demand with a recorded Cochrane request: {req:,} of {len(town):,} ({pct(req,len(town)).strip()});")
     print(f"   among those placed (A+C): {reqpl:,} of {len(pl):,} ({pct(reqpl,len(pl)).strip()}).")
     print( "   -> absence of a request says nothing about residency; it must not narrow the pool.")
-    un_all = [r for r in rows if r["_resL"]==UNRES and r["_app"] and not r["_pl"]]
+    un_all = [r for r in rows if r["_resFin"]==UNRES and r["_app"] and not r["_pl"]]
     un = [r for r in un_all if r["_valid"]]
-    print(f"\n   unresolved on the primary rule, approved, unplaced: {len(un_all):,}  (valid records {len(un):,})")
+    print(f"\n   unresolved after registry AND Strata, approved, unplaced: {len(un_all):,}  (valid records {len(un):,})")
     print(f"\n   D:  primary {cP['D']:,}    mathematical maximum {cP['D']+len(un):,}  = primary + every valid unresolved person counted as Town")
     print( "   Neither the fallback nor a proportional allocation reduces that maximum. It is not an estimate.")
     if any(r["_resF"] for r in rows):
@@ -171,6 +196,41 @@ def uncertainty(rows, cP):
         print( "   A decade-old non-Cochrane address is evidence, not resolution. Reported, not subtracted.")
     byr = Counter(col(r,"RESIDENCY_MISSING_REASON") for r in un)
     print("   unresolved by reason: " + "; ".join(f"{k} {v}" for k, v in byr.most_common()) + "\n")
+
+# ── 3a. Strata secondary source — rule 10 ───────────────────────────────────
+def strata(rows):
+    if "RESIDENCY_FINAL" not in rows[0]:
+        print("3a. STRATA SECONDARY SOURCE — not in this extract (pre rev 2.5).\n"); return
+    print("3a. STRATA address_h AS SECONDARY RESIDENCY SOURCE (rule 10)")
+    prev = [r for r in rows if r["_resL"]==UNRES]
+    res  = [r for r in prev if r["_src"]=="STRATA_ADDRESS_H"]
+    print(f"   previously unresolved on the registry: {len(prev):,}   resolved by Strata: {len(res):,}   remaining unresolved: {len(prev)-len(res):,}")
+    for k, v in Counter(r["_resFin"] for r in res).most_common(): print(f"     {k:36s} {v:6,}")
+    ru = [r for r in res if r["_app"] and not r["_pl"] and r["_valid"]]
+    print(f"   of the resolved, approved & unplaced: {len(ru):,}  -> " + ", ".join(f"{k} {v}" for k,v in Counter(r["_resFin"] for r in ru).most_common()))
+    cR = Counter(r["_cohR"] for r in rows if r["_cohR"]); cF = Counter(r["_coh"] for r in rows if r["_coh"])
+    print(f"\n   {'cohort':8s} {'registry only':>14} {'with Strata':>12} {'diff':>6}")
+    for k in ("A","B","C","D"): print(f"   {k:8s} {cR[k]:14,} {cF[k]:12,} {cF[k]-cR[k]:+6,}")
+    unp = [r for r in prev if r["_app"] and not r["_pl"] and r["_valid"]]
+    still = [r for r in unp if r["_src"]!="STRATA_ADDRESS_H"]
+    print(f"\n   unresolved+approved+unplaced: before {len(unp):,}  after {len(still):,}   -> maximum on D falls from {cR['D']+len(unp):,} to {cF['D']+len(still):,}")
+    # why the rest stayed unresolved, and the guards
+    fac = sum(1 for r in prev if col(r,"STRATA_ADDRESS_IS_FACILITY","0")=="1")
+    hist = sum(1 for r in prev if r["_src"]!="STRATA_ADDRESS_H" and col(r,"STRATA_HISTORICAL_POSTAL_CODE"))
+    noaddr = sum(1 for r in prev if not col(r,"STRATA_ADDRESS_AT_DEMAND") and not col(r,"STRATA_HISTORICAL_POSTAL_CODE"))
+    unmT = sum(1 for r in prev if r["_strat"]==UNRES)
+    print(f"\n   guards among the previously unresolved:")
+    print(f"     Strata address active at demand but it is a FACILITY (shared by 3+ people) — not used: {fac:,}")
+    print(f"     Alberta postal code that fails the geography lookup — stays unresolved:               {unmT:,}")
+    print(f"     no address active at demand; older address only (rule 9, reported not classified):   {hist:,}")
+    if hist:
+        ys = sorted(int(col(r,"STRATA_HISTORICAL_YEARS_BEFORE_DEMAND")) for r in prev
+                    if r["_src"]!="STRATA_ADDRESS_H" and col(r,"STRATA_HISTORICAL_YEARS_BEFORE_DEMAND"))
+        if ys: print(f"       staleness: {min(ys)}-{max(ys)} years before demand, median {st.median(ys)}")
+    print(f"     no Strata address at all:                                                           {noaddr:,}")
+    oop = sum(1 for r in res if col(r,"STRATA_POSTAL_CODE_AT_DEMAND") and not col(r,"STRATA_POSTAL_CODE_AT_DEMAND").startswith("T"))
+    cre = sum(1 for r in res if col(r,"STRATA_FROM_EQUALS_CREATION","0")=="1")
+    print(f"   of the {len(res):,} Strata resolutions: out-of-province postal code {oop:,}; effective_from equals record creation date {cre:,}\n")
 
 # ── 3b. residency evidence ──────────────────────────────────────────────────
 def evidence(rows):
@@ -256,7 +316,7 @@ def main(a):
     rows = load(a.master_csv)
     print(f"\n{a.master_csv}\n{len(rows):,} people in the audit universe\n")
     if not integrity(rows): sys.exit("INTEGRITY CHECKS FAILED — nothing else is printed. Fix the query first.")
-    cP = cohorts(rows); uncertainty(rows, cP); evidence(rows); methods(rows); year_waits(rows)
+    cP = cohorts(rows); uncertainty(rows, cP); strata(rows); evidence(rows); methods(rows); year_waits(rows)
     if a.published: reconcile(rows, a.published, cP)
     print("A clean run is a data-integrity result, not a methodological sign-off.")
 

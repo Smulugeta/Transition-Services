@@ -1,6 +1,6 @@
 -- ============================================================================
 -- MASTER DEMAND COHORT — A / B / C / D — STANDALONE, ONE ROW PER PERSON
--- Revision 2.4, after fourth review. Paste-and-run.
+-- Revision 2.5: Strata address history as a SECONDARY residency source. Paste-and-run.
 -- Feed the CSV to analysis/07_master_cohort_check.py.
 --
 -- WHAT CHANGED AND WHY (each item is a review finding)
@@ -88,6 +88,41 @@
 --     uncertainty around D; the maximum is primary D plus every valid
 --     unresolved approved-unplaced person.
 --
+-- REV 2.5 — STRATA address_h AS A SECONDARY RESIDENCY SOURCE
+-- Rules as specified, with three additions the data forced:
+--   1. Registry is primary and is never overwritten.
+--   2. Strata is consulted ONLY where residency_latest = 'UNRESOLVED'.
+--   3. The Strata address used is the one EFFECTIVE ON demand_dt
+--      (effective_from <= demand_dt and (effective_to > demand_dt or null)).
+--   4. Several active -> latest effective_from wins; ties broken by postal code.
+--   5. Residency comes from the SAME postal geography as the registry, never
+--      from city_name. ADDITION: a postal code that is not in the Alberta
+--      geography and does not start with T is out of province and is
+--      classified 'Not a Cochrane-area resident'; an unmapped T-code stays
+--      UNRESOLVED (lookup failed). The reviewer's own example (V3Z 9T1,
+--      Surrey BC) can only resolve this way.
+--   6-7. Outputs and hierarchy below; residency_source in
+--        ('REGISTRY','STRATA_ADDRESS_H','UNRESOLVED').
+--   8. No address effective after demand_dt is ever used.
+--   9. If nothing is active at demand but an older Strata address exists, it
+--      is reported as strata_historical_* with its staleness, not classified.
+--   ADDITION A — JOIN THROUGH patient_h, NOT patient. Every distinct
+--      (patient, address_id) pair is used, so a move that created a new
+--      address record is not lost behind the current pointer. patient_h is
+--      versioned by service_provider_id and must be reduced to DISTINCT first
+--      or every address version arrives four times. See query 11.
+--   ADDITION B — FACILITY GUARD. 32 Quigley Dr (the Bethany Cochrane campus)
+--      appears in address_h as a residence. An address version shared by
+--      facility_min_patients or more distinct patients is treated as a
+--      facility and is NOT used to classify residency (a Cochrane facility
+--      would otherwise manufacture Town residents - the exact contamination
+--      the registry method exists to avoid). Reported, not silently dropped.
+--   ADDITION C — effective_from_date often equals creation_date (the record
+--      was created that day). Flagged as strata_from_equals_creation so the
+--      checker can say how many Strata resolutions rest on a creation date.
+--   Cohorts are computed on residency_final; cohort_registry_only is kept so
+--   the change attributable to Strata is visible.
+--
 -- LEFT-TRUNCATION, AFTER THE FIRST RUN: with approval as the demand event, a
 -- person approved before 2021-04-01 has a demand event outside the window and
 -- is EXCLUDED, not flagged. The flag therefore marks almost nobody (1 person
@@ -129,7 +164,8 @@ rep_care_type (care_type, care_stream) as (
         -- outcome in this window, so they stay in hist_care_type only.
 ),
 w as (
-    select '2021-04-01'::date as win_start,
+    select 3                  as facility_min_patients,   -- ADDITION B threshold
+           '2021-04-01'::date as win_start,
            '2026-04-01'::date as win_end,           -- half-open
            '2026-03-31'::date as follow_up_end
 ),
@@ -333,6 +369,74 @@ deaths as (
     group by 1
 ),
 
+-- ── STEP 6b — STRATA ADDRESS HISTORY (secondary residency source) ─────────
+-- All address records ever linked to a patient, through patient_h reduced to
+-- distinct pairs (ADDITION A), then every dated version of those records.
+strata_addr as (
+    select k.phn,
+           ah.id                                                   as address_record_id,
+           trim(ah.street_address)                                 as street_address,
+           trim(ah.city_name)                                      as city_name,
+           upper(regexp_replace(ah.postal_code, '[^A-Za-z0-9]', '')) as postal_norm,
+           ah.effective_from_date::date                            as eff_from,
+           ah.effective_to_date::date                              as eff_to,
+           ah.creation_date::date                                  as created
+    from (select distinct id as patient_id, address_id
+          from db_source_strata_health_pathways.raw.patient_h
+          where address_id is not null) ph
+    join pat_key k on k.patient_id = ph.patient_id
+    join (select distinct id, street_address, city_name, postal_code, effective_from_date,
+                 effective_to_date, creation_date
+          from db_source_strata_health_pathways.raw.address_h) ah on ah.id = ph.address_id
+    where k.phn is not null
+),
+-- ADDITION B: how many distinct people share each address version
+strata_shared as (
+    select upper(street_address) as street_u, postal_norm, count(distinct phn) as n_patients
+    from strata_addr group by 1,2
+),
+-- the version ACTIVE ON the demand date (rules 3, 4, 8)
+strata_at_demand as (
+    select d.phn, a.street_address, a.city_name, a.postal_norm, a.eff_from, a.eff_to, a.created,
+           sh.n_patients                                            as shared_by_n,
+           iff(a.eff_from = a.created, 1, 0)                        as from_equals_creation
+    from demand_in_window d
+    join strata_addr a on a.phn = d.phn
+                      and a.eff_from <= d.demand_dt
+                      and (a.eff_to > d.demand_dt or a.eff_to is null)
+    left join strata_shared sh on sh.street_u = upper(a.street_address) and sh.postal_norm = a.postal_norm
+    qualify row_number() over (partition by d.phn order by a.eff_from desc, a.postal_norm) = 1
+),
+-- rule 9: nothing active at demand, but an older address exists
+strata_historical as (
+    select d.phn, a.postal_norm, a.eff_from,
+           datediff('year', a.eff_from, d.demand_dt)                as years_before_demand
+    from demand_in_window d
+    join strata_addr a on a.phn = d.phn and a.eff_from <= d.demand_dt
+    left join strata_at_demand sad on sad.phn = d.phn
+    where sad.phn is null
+    qualify row_number() over (partition by d.phn order by a.eff_from desc) = 1
+),
+-- rule 5: the same postal geography as the registry, never city_name
+strata_geo as (
+    select s.*,
+           pc.postalcode                                            as mapped_postal,
+           iff(upper(trim(pc.csdname_2021)) = 'COCHRANE'
+               and upper(trim(pc.csdtype_2021)) = 'T', 1, 0)        as in_town,
+           iff(upper(trim(pc.local_name)) = 'COCHRANE | SPRINGBANK', 1, 0) as in_area,
+           case when pc.postalcode is not null and upper(trim(pc.csdname_2021)) = 'COCHRANE'
+                     and upper(trim(pc.csdtype_2021)) = 'T'          then 'Town of Cochrane'
+                when pc.postalcode is not null
+                     and upper(trim(pc.local_name)) = 'COCHRANE | SPRINGBANK' then 'Cochrane catchment'
+                when pc.postalcode is not null                       then 'Not a Cochrane-area resident'
+                when s.postal_norm is not null and left(s.postal_norm,1) <> 'T'
+                                                                     then 'Not a Cochrane-area resident'  -- out of province
+                else 'UNRESOLVED' end                                 as strata_residency_raw
+    from strata_at_demand s
+    left join db_source_ah_postal_code.curated.tb_postal_code pc
+           on upper(regexp_replace(pc.postalcode, '[^A-Za-z0-9]', '')) = s.postal_norm
+),
+
 -- ── STEP 7 — ONE ROW PER PERSON ────────────────────────────────────────────
 master as (
     select d.phn, d.demand_dt, d.demand_fye, d.demand_event_type, d.was_approved,
@@ -374,6 +478,21 @@ master as (
                and (coalesce(r.n_town_years_in_window,0) = 0
                     or coalesce(r.n_town_years_in_window,0) = coalesce(r.n_window_mapped,0)), 1, 0)
                                                                                        as residency_stable_in_lookback,
+           -- STRATA secondary source (rev 2.5). Only meaningful when
+           -- residency_latest = 'UNRESOLVED'; carried for everyone for audit.
+           sg.street_address                                   as strata_address_at_demand,
+           sg.postal_norm                                      as strata_postal_code_at_demand,
+           sg.city_name                                        as strata_city_at_demand,
+           sg.eff_from                                         as strata_effective_from,
+           sg.shared_by_n                                      as strata_address_shared_by_n,
+           iff(coalesce(sg.shared_by_n,0) >= w.facility_min_patients, 1, 0) as strata_address_is_facility,
+           sg.from_equals_creation                             as strata_from_equals_creation,
+           case when sg.phn is null                                   then null
+                when coalesce(sg.shared_by_n,0) >= w.facility_min_patients
+                                                                      then 'NOT USED - facility address'
+                else sg.strata_residency_raw end                        as strata_residency,
+           sh.postal_norm                                      as strata_historical_postal_code,
+           sh.years_before_demand                              as strata_historical_years_before_demand,
            -- record validity: an impossible linkage can never take a cohort
            iff(x.death_dt is not null and x.death_dt < d.demand_dt, 0, 1)             as record_valid,
            iff(x.death_dt is not null and x.death_dt < d.demand_dt,
@@ -398,21 +517,44 @@ master as (
     left join first_site fs on fs.phn = d.phn
     left join level3_after l3 on l3.phn = d.phn
     left join deaths     x  on x.phn  = d.phn
+    left join strata_geo sg on sg.phn = d.phn
+    left join strata_historical sh on sh.phn = d.phn
+),
+-- ── STEP 7b — FINAL RESIDENCY HIERARCHY (rule 7) ───────────────────────────
+master_final as (
+    select m.*,
+           case when m.residency_latest <> 'UNRESOLVED'                          then 'REGISTRY'
+                when m.strata_residency in ('Town of Cochrane','Cochrane catchment',
+                                            'Not a Cochrane-area resident')      then 'STRATA_ADDRESS_H'
+                else 'UNRESOLVED' end                                           as residency_source,
+           case when m.residency_latest <> 'UNRESOLVED'                          then m.residency_latest
+                when m.strata_residency in ('Town of Cochrane','Cochrane catchment',
+                                            'Not a Cochrane-area resident')      then m.strata_residency
+                else 'UNRESOLVED' end                                           as residency_final
+    from master m
 ),
 classified as (
     select m.*,
-           -- PRIMARY: latest mapped address in the lookback (reviewer decision 2).
-           -- B = any NON-TOWN resident placed in Cochrane (fourth review).
+           -- PRIMARY: residency_final = registry latest address, else Strata
+           -- address active at demand (rev 2.5). B = any NON-TOWN resident.
+           case when was_approved = 0 or record_valid = 0 then null
+                when residency_final = 'Town of Cochrane' and first_placement_in_cochrane = 1 then 'A'
+                when residency_final in ('Not a Cochrane-area resident','Cochrane catchment')
+                     and first_placement_in_cochrane = 1                                   then 'B'
+                when residency_final = 'Town of Cochrane' and placed = 1                    then 'C'
+                when residency_final = 'Town of Cochrane' and placed = 0                    then 'D'
+                else null end as cohort,
+           -- the same rule on registry alone, so Strata's effect is visible
            case when was_approved = 0 or record_valid = 0 then null
                 when residency_latest = 'Town of Cochrane' and first_placement_in_cochrane = 1 then 'A'
                 when residency_latest in ('Not a Cochrane-area resident','Cochrane catchment')
                      and first_placement_in_cochrane = 1                                    then 'B'
                 when residency_latest = 'Town of Cochrane' and placed = 1                   then 'C'
                 when residency_latest = 'Town of Cochrane' and placed = 0                   then 'D'
-                else null end as cohort,
-           iff(residency_latest = 'Cochrane catchment' and first_placement_in_cochrane = 1
+                else null end as cohort_registry_only,
+           iff(residency_final = 'Cochrane catchment' and first_placement_in_cochrane = 1
                and was_approved = 1 and record_valid = 1, 1, 0)                          as b_catchment,
-           iff(residency_latest = 'UNRESOLVED' and first_placement_in_cochrane = 1
+           iff(residency_final = 'UNRESOLVED' and first_placement_in_cochrane = 1
                and was_approved = 1 and record_valid = 1, 1, 0)                          as cochrane_placement_residency_unresolved,
            -- SENSITIVITY: the published any-address-in-three-years rule
            case when was_approved = 0 or record_valid = 0 then null
@@ -423,12 +565,13 @@ classified as (
                 when residency_any3 = 'Town of Cochrane' and placed = 0                   then 'D'
                 else null end as cohort_any3,
            -- presentation subset; NOT a filter on the audit universe
-           iff(residency_latest   in ('Town of Cochrane','Cochrane catchment')
+           iff(residency_final    in ('Town of Cochrane','Cochrane catchment')
+            or residency_latest   in ('Town of Cochrane','Cochrane catchment')
             or residency_any3     in ('Town of Cochrane','Cochrane catchment')
             or residency_fallback in ('Town of Cochrane','Cochrane catchment')
             or first_placement_in_cochrane = 1
-            or residency_latest = 'UNRESOLVED', 1, 0) as cochrane_facing
-    from master m
+            or residency_final = 'UNRESOLVED', 1, 0) as cochrane_facing
+    from master_final m
 )
 
 -- OUTPUT. Rev 2.3: NO FILTER. The full audit universe is returned. Everyone

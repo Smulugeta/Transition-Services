@@ -20,8 +20,10 @@ scripts. Every published figure traces to a numbered block in
 > evidence only and reduces nothing. All fourteen integrity checks pass on the
 > full 33,003-person universe. Details, the transition matrix against the
 > published A/B/C, and every correction are in
-> `reference/master_cohort_run_2026-09-02.md`. `sql/09` rev 2.4 is written and
-> not yet run; checker rev 4 already applies its rules.
+> `reference/master_cohort_run_2026-09-02.md`. `sql/09` **rev 2.5** adds Strata
+> `address_h` as a secondary residency source for people the registry cannot
+> resolve; it is written and not yet run, and **`sql/11` must be run first** to
+> prove the patient-to-address-history key.
 > The word "province-wide" is **withdrawn permanently for this source**:
 > `sql/10_coverage_checks.sql` has been run and the admissions source is the
 > Calgary and Edmonton Strata instances only. Every D figure carries that
@@ -265,6 +267,43 @@ they are historical only — in the already-in-care scope, never an outcome.
 Whether they are the pre-rename Type B and Level 3 codes is still an ALA
 question but only affects pre-2012 history.
 
+### Strata address history as a secondary residency source (rev 2.5)
+
+For people the registry cannot resolve, `sql/09` rev 2.5 consults Strata's
+`address_h`, under the rules as specified: registry stays primary and is
+never overwritten; Strata is used only where `residency_latest = 'UNRESOLVED'`;
+the address used is the one **effective on the demand date**, latest
+`effective_from` winning; residency comes from the **same postal geography as
+the registry**, never from `city_name`; nothing effective after the demand
+date is used; an older address with nothing active at demand is reported with
+its staleness, not classified. Outputs: `strata_address_at_demand`,
+`strata_postal_code_at_demand`, `strata_city_at_demand`, `strata_residency`,
+`residency_source` ∈ {REGISTRY, STRATA_ADDRESS_H, UNRESOLVED},
+`residency_final`. Cohorts are computed on `residency_final`;
+`cohort_registry_only` is kept so Strata's effect is visible.
+
+Three things the data forced beyond the rules:
+
+- **Join through `patient_h`, not `patient`.** A 9-row sample and the query
+  that produced it show `address_h.id` is the address record and its rows are
+  date-ranged versions, reachable from the patient's pointer — but if a move
+  creates a new record, the current pointer misses history. Every distinct
+  `(patient, address_id)` pair from `patient_h` is used. `patient_h` is itself
+  versioned by `service_provider_id` and must be reduced to distinct first, or
+  every address version arrives four times. **`sql/11` decides whether anyone
+  has more than one address record; run it before trusting rev 2.5.**
+- **Facility guard.** 32 Quigley Dr — the Bethany Cochrane campus — appears in
+  `address_h` as a residence. An address version shared by 3 or more distinct
+  people is treated as a facility and never used to classify residency, or a
+  Cochrane facility would manufacture Town residents. Reported, not dropped.
+- **Out-of-province postal codes.** A code absent from the Alberta geography
+  whose first letter is not T is classified not-Cochrane; an unmapped T-code
+  stays unresolved. The reviewer's own example (V3Z 9T1, Surrey BC) can only
+  resolve this way and it is still a postal-code rule, not a city-name one.
+
+`effective_from_date` often equals the record's `creation_date`; the checker
+reports how many Strata resolutions rest on a creation date.
+
 ### The controlling logic: one person-level demand cohort
 
 Each person's **demand event** is the earliest of their first Type A/B
@@ -352,6 +391,7 @@ sql/
   08_master_cohort.sql            CONTROLLING: one demand event per person, A–D derived
   09_master_cohort_standalone.sql paste-and-run master cohort, rev 2 — one row per person
   10_coverage_checks.sql          zone coverage, legacy codes, NULL sources, ties, approval fields
+  11_address_h_key_validation.sql proves the Strata address-history join before 09 rev 2.5 is trusted
 analysis/
   04_displacement_check.py        joins 02 and 03 — the 138-of-220 finding
   06_exit_classification.py       validates and classifies 05's output
@@ -428,9 +468,10 @@ Not blocking anything published, but each would strengthen the case:
    admissions per 1,000 seniors — benchmarkable against comparable Alberta
    communities and projectable against the town's growth. Single most useful
    number not yet in hand, and it needs no external request.
-2. **Consultant confirms the meaning of B** (non-Town → 143; outside the
-   catchment → 137 with the 6 catchment people shown separately). Then run
-   `sql/09` rev 2.4 and the reviewer's fifth pass. Still for ALA: a Central-zone source; the Retired-DAL/DEL codes; which approval
+2. **Run `sql/11`** (the `address_h` key validation), then `sql/09` rev 2.5,
+   then the checker; it reports the rule-10 figures. **Consultant confirms the
+   meaning of B** (non-Town → 143). Then the reviewer's fifth pass. Still for
+   ALA: a Central-zone source; the Retired-DAL/DEL codes; which approval
    field is operational. Waitlist history before 2021-04-01 would additionally
    resolve the 1,604 left-truncated people and turn the 138 displacement floor
    into a count.

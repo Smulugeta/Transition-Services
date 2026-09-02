@@ -191,7 +191,10 @@ universe must not be filtered.
   figure carries "no Type A/B placement observed in the Calgary/Edmonton
   Strata placement source by 31 March 2026".
 - Rev 2.3 has been run; rev 2.4 (PHN validity, record_valid, the B rule,
-  residency_evidence) is written and not yet run. The checker rev 4 already
+  residency_evidence) and rev 2.5 (Strata `address_h` as a secondary residency
+  source, gated on `sql/11`) are written and not yet run. Rev 2.5 will change
+  the unresolved pool and possibly A/B/C/D; the checker's rule-10 block reports
+  exactly what moved and why. The checker rev 4 already
   applies the rev 2.4 rules to the rev 2.3 extract, which is where the figures
   above come from. 35 people are left-truncated in the full universe, none in
   any cohort.
