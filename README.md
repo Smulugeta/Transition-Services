@@ -13,8 +13,11 @@ scripts. Every published figure traces to a numbered block in
 > sign-off.** Two rounds of review found fourteen problems in the cohort D
 > work; all are corrected or measured in `sql/09` and `analysis/07` as
 > described under *Cohort D*. Neither has been run against the warehouse.
-> The word "province-wide" is **withdrawn** until `sql/10_coverage_checks.sql`
-> shows the admissions source covers zones other than Calgary and Edmonton.
+> The word "province-wide" is **withdrawn permanently for this source**:
+> `sql/10_coverage_checks.sql` has been run and the admissions source is the
+> Calgary and Edmonton Strata instances only. Every D figure carries that
+> qualifier and D3 is an upper bound. Results in
+> `reference/coverage_check_results.md`.
 
 ---
 
@@ -240,7 +243,7 @@ Each was confirmed in the data before it was fixed.
 | 2 | Demand event was first census appearance, not approval | 8.2% of list-appearers are never approved; approval precedes first appearance for 710 of 735 | Demand event = `coalesce(assess_approved_date, calculated_assess_approved_date)`; never-approved carried with `was_approved = 0` and excluded from A–D |
 | 3 | "Still waiting" was not identified; the checker relabelled "no placement observed" as still waiting | 2,414 people on the census on the last day | D split: **D1** on list at follow-up · **D2** died before placement · **D3** exited, no placement observed in source |
 | 4 | Level 3 dropped from the first-ever-admission test, so a Level 3 → Type A transfer looked like new demand | — | Two vocabularies: historical residential scope (A, B, Level 3, legacy codes) for "already in care"; reporting scope (A, B) for outcomes |
-| 5 | **"Province-wide" is not demonstrated** | The admissions source's entire `care_type` vocabulary is CAL-/EDM-prefixed. No Central, North or South labels exist | Claim withdrawn. D3 is an upper bound until `sql/10` check 1 is run and ALA confirms zone coverage |
+| 5 | **"Province-wide" is not demonstrated** | **Confirmed by check 1:** 936 sites / 294,659 admissions in CAL+EDM against 7 sites / 204 admissions in the other three zones | Claim withdrawn permanently. D3 is an upper bound; every D figure carries "in the Calgary and Edmonton Strata instances" |
 | 6 | Residency = *any* Town address in 3 prior FY, not residence *at* the demand event | — | Both methods carried: `residency_any3` (published) and `residency_latest`. Checker prints the person-level transition matrix and the cohort impact. Published rule unchanged; effect measured |
 | 7 | Inner join to the postal lookup deleted registry rows with unmapped codes into "no registry record" | — | LEFT join; `residency_missing_reason` in four classes |
 | 8 | Checker printed every table before exiting on integrity failure | — | Stops immediately; nothing below the checks is printed |
@@ -248,9 +251,10 @@ Each was confirmed in the data before it was fixed.
 | 10 | NULL `source_location` dropped by `<>`; same-day ties resolved arbitrarily | 11 NULL sources in 55,642; 0 same-day ties in the Cochrane cohort | `is distinct from`; deterministic tiebreak (Cochrane first, then site) with `n_sameday_first` reported |
 
 Also found: `CAL - Retired - DAL` (1,759 admissions) and `CAL - Retired - DEL`
-(47) are not in the published vocabulary and look like the pre-rename Type B
-and Level 3 codes. Included in scope pending ALA confirmation; `sql/10` check 2
-sizes them.
+(47) are not in the published vocabulary. Check 2 shows both end in 2012, so
+they are historical only — in the already-in-care scope, never an outcome.
+Whether they are the pre-rename Type B and Level 3 codes is still an ALA
+question but only affects pre-2012 history.
 
 ### The controlling logic: one person-level demand cohort
 
@@ -342,6 +346,7 @@ build/
   build-onepager-docx.js          generates the one-pager .docx
 reference/
   cochrane_address_lookup.csv     129 Cochrane-tagged addresses, pre-classified
+  coverage_check_results.md       outputs of sql/10 with interpretation (run 2026-09-02)
 ```
 
 ### Running things
@@ -402,10 +407,10 @@ Not blocking anything published, but each would strengthen the case:
    admissions per 1,000 seniors — benchmarkable against comparable Alberta
    communities and projectable against the town's growth. Single most useful
    number not yet in hand, and it needs no external request.
-2. **Run `sql/10` check 1 first, then `sql/09`, then the checker.** Check 1
-   decides whether D3 is a finding or an artefact of source coverage. Then
-   confirm with ALA: zone coverage, the Retired-DAL/DEL codes, and which
-   approval field is operational. Waitlist history before 2021-04-01 would additionally
+2. **Run `sql/09` rev 2.1, then the checker.** The coverage checks are done.
+   Still for ALA: is there a source covering Central-zone placements of
+   Calgary-zone residents (without it D3 cannot be separated from out-of-zone
+   placement); the Retired-DAL/DEL codes; which approval field is operational. Waitlist history before 2021-04-01 would additionally
    resolve the 1,604 left-truncated people and turn the 138 displacement floor
    into a count.
 3. **Confirm with ALA:** the meaning of `rating = 0` in the waitlist source,

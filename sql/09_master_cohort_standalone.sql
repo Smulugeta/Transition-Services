@@ -1,7 +1,7 @@
 -- ============================================================================
 -- MASTER DEMAND COHORT — A / B / C / D — STANDALONE, ONE ROW PER PERSON
--- Revision 2, after second review. Paste-and-run. Feed the CSV to
--- analysis/07_master_cohort_check.py.
+-- Revision 2.1, after second review and the coverage checks. Paste-and-run.
+-- Feed the CSV to analysis/07_master_cohort_check.py.
 --
 -- WHAT CHANGED AND WHY (each item is a review finding)
 --   1. Outcome capped at follow_up_end. A placement after 2026-03-31 cannot
@@ -22,13 +22,13 @@
 --      before the window", exactly as query 01 did. REPORTING scope (Type A,
 --      B) decides the outcome. Using the reporting filter for history let a
 --      Level 3 -> Type A transfer look like new demand.
---   5. "Province-wide" is WITHDRAWN. The admissions source's entire care_type
---      vocabulary is CAL- and EDM-prefixed; there are no Central, North or
---      South labels. A Town of Cochrane resident placed in Red Deer may be
---      invisible here and would wrongly land in D3. Run 10_coverage_checks
---      and confirm the source's zone coverage with ALA before any D figure is
---      quoted. Until then the outcome is "no placement observed IN THIS
---      SOURCE".
+--   5. "Province-wide" is WITHDRAWN — CONFIRMED by 10_coverage_checks: the
+--      source is the Calgary and Edmonton Strata instances (936 sites,
+--      294,659 admissions) with 7 vestigial sites and 204 admissions in the
+--      other three zones. A Town of Cochrane resident placed in Central zone
+--      is invisible here and lands in D3. Every D figure carries "in the
+--      Calgary and Edmonton Strata instances"; D3 is an upper bound. See
+--      reference/coverage_check_results.md.
 --   6. Two residency methods carried side by side. residency_any3 is the
 --      published rule (any Town address in the three prior fiscal years).
 --      residency_latest reads the MOST RECENT pre-demand address in that
@@ -70,8 +70,9 @@ rep_care_type (care_type, care_stream) as (
         ('EDM - LTC',                                      'Type A'),
         ('CAL - Supportive Living Level 4 (DAL)',          'Type B'),
         ('CAL - Supportive Living Level 4 Dementia (DAL)', 'Type B'),
-        ('EDM - DSL4 / DSL4D',                             'Type B'),
-        ('CAL - Retired - DAL',                            'Type B (legacy code)')    -- CONFIRM with ALA
+        ('EDM - DSL4 / DSL4D',                             'Type B')
+        -- Retired-DAL/DEL end in 2012 (check 2); they are history, never an
+        -- outcome in this window, so they stay in hist_care_type only.
 ),
 w as (
     select '2021-04-01'::date as win_start,
@@ -102,6 +103,7 @@ adm_all as (
     left join coch_site s on s.site_name  = trim(a.admission_location)
     where trim(a.source_location) is distinct from trim(a.admission_location)
       and k.phn is not null
+      and split_part(trim(a.admission_location), ' - ', 1) <> 'TEST'   -- one test row (check 1)
 ),
 first_ever_residential as (           -- HISTORICAL scope
     select a.phn, min(a.admission_date) as first_residential_ever,
