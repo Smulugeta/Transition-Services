@@ -261,10 +261,15 @@ the 317 placed Town residents ever rated a Cochrane site — about half. Buildin
 D from Cochrane-raters would miss half of it and select on willingness to ask
 rather than on where people live.
 
-**Query 08 has not yet been run.** Its Block R reconciles against the published
-A/B/C; it will not match exactly, because the anchor moves earlier for anyone
-with a waitlist record, and the size and direction of that difference is
-itself something to report rather than adjust away.
+**Query 09 is the paste-and-run form of 08** and needs nothing materialised
+first. Its output is one row per person; `analysis/07_master_cohort_check.py`
+runs nine integrity checks that must all pass, tabulates A–D with D split by
+outcome, runs everything with and without the left-truncated, sizes the
+unresolved-residency upper bound on D, and reconciles person by person against
+the published A/B/C. The reconciliation will not match exactly — the anchor
+moves earlier for anyone with a waitlist record — and the size and direction
+of that difference is itself something to report rather than adjust away.
+Neither query has been run against the warehouse yet.
 
 ### Not to be used yet
 
@@ -300,9 +305,11 @@ sql/
   05_waitlist_spells.sql          cohort D — spells, exits, deaths (corrected)
   07_cohort_d_residency.sql       cohort D — list-entry residency, diagnostic (corrected)
   08_master_cohort.sql            CONTROLLING: one demand event per person, A–D derived
+  09_master_cohort_standalone.sql paste-and-run version of 08 — one row per person
 analysis/
   04_displacement_check.py        joins 02 and 03 — the 138-of-220 finding
   06_exit_classification.py       validates and classifies 05's output
+  07_master_cohort_check.py       validates 09's output, tabulates A–D, reconciles vs 02
 reports/
   cochrane-report.html            full evidence paper
   cochrane-onepager.html          one-page summary of findings
@@ -326,6 +333,9 @@ python3 analysis/04_displacement_check.py placement.csv waitlist.csv
 
 # cohort D — classify exits, with the sensitivity and integrity checks
 python3 analysis/06_exit_classification.py spells.csv --window 30 --rereg 90
+
+# A/B/C/D from one base — run sql/09 in Snowflake, export, then:
+python3 analysis/07_master_cohort_check.py master.csv --published client_level.csv
 
 # regenerate the Word documents after editing the builders
 cd build && npm install && node build-docx.js && node build-onepager-docx.js
