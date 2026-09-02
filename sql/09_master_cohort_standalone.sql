@@ -1,6 +1,6 @@
 -- ============================================================================
 -- MASTER DEMAND COHORT — A / B / C / D — STANDALONE, ONE ROW PER PERSON
--- Revision 2.2, after the first real run. Paste-and-run.
+-- Revision 2.3, after third review. Paste-and-run.
 -- Feed the CSV to analysis/07_master_cohort_check.py.
 --
 -- WHAT CHANGED AND WHY (each item is a review finding)
@@ -40,6 +40,28 @@
 --      unmapped code no longer deletes the person.
 --  10. NULL source_location kept (is distinct from). Same-day ties broken
 --      deterministically and counted.
+--
+-- REV 2.3 — THIRD REVIEW
+--   · The cohort is named: NEW TYPE A/B DEMAND ARISING FY2022-FY2026. It is
+--     not "placement activity FY2022-26"; that is the capacity analysis in
+--     query 01 and stays separate.
+--   · Residency PRIMARY = latest mapped address in the three-year lookback
+--     (residency_latest). The published any-address-in-three-years rule is
+--     carried as SENSITIVITY (residency_any3, cohort_any3).
+--   · Already-in-care is tested against the DEMAND EVENT, not the window
+--     start: first_residential_ever < demand_dt excludes. A person in Level 3
+--     since 2022 who is approved for Type A in 2024 is a transfer, not new
+--     demand.
+--   · NO OUTPUT FILTER. The full audit universe is returned; cochrane_facing
+--     marks the presentation subset. Rev 2.2 dropped unresolved-residency
+--     people unless they had requested Cochrane. That is the request-based
+--     selection rule rejected for D itself, and the data rejects it here too:
+--     only 53% of known Town demand ever recorded a Cochrane request.
+--   · Unresolved residency is RESOLVED FURTHER, not filtered: residency_fallback
+--     is the latest mapped address before the demand event at ANY distance,
+--     with fallback_years_before_demand saying how stale it is. People with no
+--     registry record at all cannot be resolved and stay UNRESOLVED; the
+--     checker reports them as the mathematical maximum on D.
 --
 -- LEFT-TRUNCATION, AFTER THE FIRST RUN: with approval as the demand event, a
 -- person approved before 2021-04-01 has a demand event outside the window and
@@ -175,12 +197,18 @@ demand as (
     left join first_ever_residential h on h.phn = coalesce(l.phn, a.phn)
     cross join w
     where h.first_residential_ever is null or h.first_residential_ever >= w.win_start
+    -- (the stricter test against the demand event itself is in demand_in_window)
 ),
 demand_in_window as (
     select d.*,
            iff(month(d.demand_dt) >= 4, year(d.demand_dt) + 1, year(d.demand_dt)) as demand_fye
     from demand d cross join w
     where d.demand_dt >= w.win_start and d.demand_dt < w.win_end
+      -- ALREADY IN RESIDENTIAL CARE WHEN THE DEMAND EVENT HAPPENED. Tested
+      -- against the demand event, not the window start (rev 2.3). Equality is
+      -- allowed: when the demand event IS the first residential admission the
+      -- two dates coincide and that is new demand.
+      and (d.first_residential_ever is null or d.first_residential_ever >= d.demand_dt)
 ),
 
 -- ── STEP 5 — RESIDENCY, TWO METHODS, MISSINGNESS SPLIT ─────────────────────
@@ -199,7 +227,8 @@ geo as (
 ),
 res_rows as (
     select d.phn, d.demand_fye, g.fye, g.postal_cd, g.mapped, g.in_town, g.in_area,
-           iff(g.fye between d.demand_fye-3 and d.demand_fye-1, 1, 0) as in_window
+           iff(g.fye between d.demand_fye-3 and d.demand_fye-1, 1, 0) as in_window,
+           iff(g.fye <= d.demand_fye-1, 1, 0)                          as pre_demand
     from demand_in_window d
     left join geo g on g.phn = d.phn
 ),
@@ -215,7 +244,13 @@ residency as (
            -- METHOD B: the most recent mapped address in the window
            max_by(in_town, iff(in_window=1 and mapped=1, fye, null))    as town_latest,
            max_by(in_area, iff(in_window=1 and mapped=1, fye, null))    as area_latest,
-           max(iff(in_window=1 and mapped=1, fye, null))                as latest_window_fye
+           max(iff(in_window=1 and mapped=1, fye, null))                as latest_window_fye,
+           -- FALLBACK: latest mapped address before the demand event at any
+           -- distance. Resolves "registry record, no year in lookback".
+           count_if(pre_demand=1 and mapped=1)                          as n_predemand_mapped,
+           max_by(in_town, iff(pre_demand=1 and mapped=1, fye, null))   as town_fallback,
+           max_by(in_area, iff(pre_demand=1 and mapped=1, fye, null))   as area_fallback,
+           max(iff(pre_demand=1 and mapped=1, fye, null))               as fallback_fye
     from res_rows
     group by phn
 ),
@@ -283,6 +318,12 @@ master as (
                 when r.town_latest = 1                  then 'Town of Cochrane'
                 when r.area_latest = 1                  then 'Cochrane catchment'
                 else 'Not a Cochrane-area resident' end                              as residency_latest,
+           -- FALLBACK — only meaningful when residency_latest is UNRESOLVED
+           case when coalesce(r.n_predemand_mapped,0) = 0 then 'UNRESOLVED'
+                when r.town_fallback = 1                   then 'Town of Cochrane'
+                when r.area_fallback = 1                   then 'Cochrane catchment'
+                else 'Not a Cochrane-area resident' end                              as residency_fallback,
+           iff(r.fallback_fye is null, null, d.demand_fye - r.fallback_fye)          as fallback_years_before_demand,
            case when coalesce(r.n_registry_fye,0)>=10 then 'HIGH'
                 when coalesce(r.n_registry_fye,0)>=5  then 'MEDIUM' else 'LOW' end   as confidence,
            o.first_placement_dt, o.first_placement_after_followup, o.n_sameday_first,
@@ -308,28 +349,36 @@ master as (
 ),
 classified as (
     select m.*,
-           -- cohort on the PUBLISHED residency rule; the checker recomputes on
-           -- residency_latest and reports the transition matrix.
+           -- PRIMARY: latest mapped address in the lookback (reviewer decision 2)
+           case when was_approved = 0 then null
+                when residency_latest = 'Town of Cochrane' and first_placement_in_cochrane = 1 then 'A'
+                when residency_latest = 'Not a Cochrane-area resident'
+                     and first_placement_in_cochrane = 1                                    then 'B'
+                when residency_latest = 'Town of Cochrane' and placed = 1                   then 'C'
+                when residency_latest = 'Town of Cochrane' and placed = 0                   then 'D'
+                else null end as cohort,
+           -- SENSITIVITY: the published any-address-in-three-years rule
            case when was_approved = 0 then null
                 when residency_any3 = 'Town of Cochrane' and first_placement_in_cochrane = 1 then 'A'
                 when residency_any3 = 'Not a Cochrane-area resident'
                      and first_placement_in_cochrane = 1                                  then 'B'
                 when residency_any3 = 'Town of Cochrane' and placed = 1                   then 'C'
                 when residency_any3 = 'Town of Cochrane' and placed = 0                   then 'D'
-                else null end as cohort
+                else null end as cohort_any3,
+           -- presentation subset; NOT a filter on the audit universe
+           iff(residency_latest   in ('Town of Cochrane','Cochrane catchment')
+            or residency_any3     in ('Town of Cochrane','Cochrane catchment')
+            or residency_fallback in ('Town of Cochrane','Cochrane catchment')
+            or first_placement_in_cochrane = 1
+            or residency_latest = 'UNRESOLVED', 1, 0) as cochrane_facing
     from master m
 )
 
--- OUTPUT. Rev 2.2: an UNRESOLVED person is kept only with a Cochrane signal —
--- a recorded Cochrane request or a Cochrane placement. The first real run kept
--- every unresolved person in the province (490 of 526 had no Cochrane link)
--- and made the upper bound on D meaningless. Unresolved-with-signal is the
--- honest upper-bound add to D and nothing wider.
+-- OUTPUT. Rev 2.3: NO FILTER. The full audit universe is returned. Everyone
+-- confirmed non-resident under BOTH residency rules AND the fallback AND not
+-- placed in Cochrane bears on nothing, so cochrane_facing = 0 for them; use
+-- that flag for presentation, never as a WHERE clause on the QA extract.
 select *
 from classified
-where residency_any3   in ('Town of Cochrane','Cochrane catchment')
-   or residency_latest in ('Town of Cochrane','Cochrane catchment')
-   or first_placement_in_cochrane = 1
-   or (residency_any3 = 'UNRESOLVED' and rated_cochrane = 1)
 order by cohort nulls last, demand_dt
 ;

@@ -1,153 +1,151 @@
-# Master cohort — first real runs, 2026-09-02
+# Master cohort — runs of 2026-09-02, read on the rev 2.3 rules
 
-Output of `sql/09_master_cohort_standalone.sql`, validated by
-`analysis/07_master_cohort_check.py`. Run twice: rev 2.1 (1,139 rows,
-province-wide unresolved kept) and rev 2.2 (653 rows, unresolved kept only
-with a Cochrane signal). **Every A/B/C/D figure below is identical between the
-two runs** — the filter change touched only the unresolved pool, as intended.
-**All thirteen integrity checks pass on both.** That is a data-integrity result. It is not a methodological
-sign-off, and nothing here is cleared for the report until the reviewer has
-read it.
+Output of `sql/09_master_cohort_standalone.sql` rev 2.2 (653 rows), validated by
+`analysis/07_master_cohort_check.py` rev 3. **All twelve integrity checks pass.**
+That is a data-integrity result, not a methodological sign-off.
+
+The checker recomputes every cohort from residency × placement × location and
+compares it with the SQL's own column; the two agree for all 653 people.
+
+## Reviewer decisions adopted (third review)
+
+1. **Temporal alignment approved.** The cohort is **new Type A/B demand arising
+   FY2022–FY2026**: people whose approval (or first admission, if never
+   approved) fell inside the window. A pre-window approval excludes a person
+   from A/C and from D alike. This is *not* "placement activity FY2022–26";
+   that is the capacity analysis in query 01 and stays separate.
+2. **Residency primary = latest mapped pre-demand address in the lookback.**
+   The published any-address-in-three-years rule is the sensitivity.
+3. **D3 is quotable descriptively only:** *"exited the observed waitlist with no
+   Type A/B placement found in the Calgary/Edmonton Strata placement source by
+   31 March 2026."* Not "unmet demand". The source-coverage caveat applies to
+   **all of D**, not only D3.
+4. Already-in-care is tested against the demand event, not the window start
+   (rev 2.3). Zero rows affected on this data.
+5. The request-based gate on the uncertainty pool is **removed** (rev 2.3).
+   The full audit universe is returned; `cochrane_facing` is a presentation
+   flag, never a filter.
 
 ## The four cohorts
 
-Person-level. A / C / D are Town of Cochrane residents under the published
-residency rule (any Town address in the three fiscal years before the demand
-event). Demand event = approval date, or admission if never approved.
+| Cohort | | **Primary** (latest address) | | Sensitivity (any-3-year) | |
+|---|---|---|---|---|---|
+| A | resident, placed in Cochrane | **87** | 25.1% | 90 | 24.2% |
+| C | resident, placed outside | **191** | 55.2% | 208 | 55.9% |
+| D | resident, no placement in source by 2026-03-31 | **68** | 19.7% | 74 | 19.9% |
+| | **resident demand A + C + D** | **346** | | 372 | |
+| B | non-resident, placed in Cochrane | **137** | | 134 | |
 
-| Cohort | | People | Share of resident demand |
-|---|---|---|---|
-| A | resident, placed in Cochrane | 90 | 24.2% |
-| C | resident, placed outside | 208 | 55.9% |
-| D | resident, no placement in source by 2026-03-31 | 74 | 19.9% |
-| | **resident demand A + C + D** | **372** | |
-| B | non-resident, placed in Cochrane | 134 | |
+The two rules differ for 37 of 653 people, all in one direction — 24 Town → not
+a resident, 11 catchment → not a resident, 2 Town → catchment. Nobody moves
+into Town. The D share is 19.7% against 19.9%; the story does not change.
 
-Never approved and excluded: 0 in this extract.
-
-### D by class — different findings, never one word
+### D by class — primary
 
 | | People | Share of D |
 |---|---|---|
-| D1 still on the list at follow-up | 14 | 18.9% |
-| D2 died before any placement | 26 | 35.1% |
-| D3 exited, no placement observed in source | 34 | 45.9% |
+| D1 still on the list at follow-up | 12 | 17.6% |
+| D2 died before any placement | 25 | 36.8% |
+| D3 exited, no placement observed in source | 31 | 45.6% |
 
-- **D3 is an upper bound.** The source is the Calgary and Edmonton Strata
-  instances; a resident placed in Central zone is invisible here and lands in
-  D3. D3 last-seen dates cluster in FY2026 (15 of 34), and median time from
-  approval to last seen is 138 days.
-- 9 people in D were placed **after** 2026-03-31 (8 of them D1). They are D by
-  the follow-up rule and are carried as sensitivity only.
+- 7 people in D were placed **after** 2026-03-31 (sensitivity only).
 - 1 person in D received a Level 3 bed instead of the Type A/B bed approved.
-- Upper bound: **9** people are unresolved residency, approved, unplaced, and
-  carry a recorded Cochrane request (rev 2.2's own `rated_cochrane` flag). If
-  every one were a Town resident, D would be **83**.
+- D1 sits almost entirely in FY2026 (9 of 12) — censoring, not a trend.
 
-### By fiscal year of demand event
+### By fiscal year of demand event — primary
 
 | FYE | A | C | D1 | D2 | D3 |
 |---|---|---|---|---|---|
-| 2022 | 20 | 31 | 0 | 8 | 5 |
-| 2023 | 24 | 48 | 0 | 10 | 6 |
-| 2024 | 19 | 50 | 1 | 5 | 7 |
-| 2025 | 16 | 48 | 2 | 3 | 10 |
-| 2026 | 11 | 31 | 11 | 0 | 6 |
+| 2022 | 20 | 27 | 0 | 7 | 5 |
+| 2023 | 23 | 45 | 0 | 10 | 5 |
+| 2024 | 18 | 47 | 1 | 5 | 6 |
+| 2025 | 16 | 44 | 2 | 3 | 9 |
+| 2026 | 10 | 28 | 9 | 0 | 6 |
 
-D1 sits almost entirely in FY2026, as censoring predicts. Do not read the D
-share as a trend across years.
-
-### Days from approval to first placement (placed only)
+### Days from approval to first placement — primary, placed only
 
 | | n | median | p90 |
 |---|---|---|---|
-| A | 90 | 37 | 364 |
-| B | 134 | 31 | 361 |
-| C | 208 | 21 | 304 |
+| A | 87 | 39 | 364 |
+| B | 137 | 31 | 361 |
+| C | 191 | 21 | 304 |
 
-Same direction as the published wait (A 32 / C 18 / B 30) on the
-approval-to-admission clock; not the same population, so not the same number.
+## Residency uncertainty around D — no request-based gate
 
-## Residency: published rule vs latest-address rule
+Why a request gate is wrong, from this data: only **190 of 346 (54.9%)** of
+known Town demand ever recorded a Cochrane request; among those actually
+placed, **141 of 278 (50.7%)**. Absence of a request says nothing about
+residency and must not narrow the pool.
 
-37 of 1,139 people (3.2%) change verdict. 24 go Town → not a resident, 11
-catchment → not a resident, 2 Town → catchment. Nobody moves *into* Town.
+Unresolved on the primary rule, approved, unplaced: **9** (5 no registry
+record, 4 registry record with no year in the lookback).
 
-| Cohort | Published rule (any3) | Latest address | Diff |
-|---|---|---|---|
-| A | 90 | 87 | −3 |
-| B | 134 | 137 | +3 |
-| C | 208 | 191 | −17 |
-| D | 74 | 68 | −6 |
-| **A + C + D** | **372** | **346** | **−26** |
+| Tier | D |
+|---|---|
+| Primary | **68** |
+| + every unresolved counted as Town — mathematical maximum on this extract | 77 |
 
-The published rule is not changed. This is the measured cost of changing it:
-26 people who had a Cochrane address two or three years before their demand
-event but were somewhere else in the most recent year. Whether they are
-"Cochrane demand" is a definitional call for the reviewer, not the query.
+Rev 2.3 adds `residency_fallback` — the latest mapped address before the demand
+event at any distance — which will resolve the "no year in lookback" class and
+leave only "no registry record" as truly unresolved. The three-tier figure
+(primary / + fallback-Town / + truly unresolved) is reported once rev 2.3 is run.
 
-## Reconciliation against the published A / B / C
+On the rev 2.1 extract, which kept every unresolved person in the province,
+the same maximum was 74 + 114 = 188. That figure is mathematically valid and
+analytically useless; the answer is better resolution (rev 2.3), not a narrower
+pool (rev 2.2, withdrawn).
 
-Published (query 02 demand basis) vs master, person by person:
+**Correction:** an earlier message gave the unresolved-with-request count as 8
+and the bound as 82. The query's own flag gives 9 and 83. The rule itself is
+now withdrawn, so neither figure is used.
 
-| | Published | Master | Diff |
-|---|---|---|---|
-| A | 97 | 90 | −7 |
-| B | 144 | 134 | −10 |
-| C | 220 | 208 | −12 |
-| D | — | 74 | |
+## Reconciliation — full transition matrix, primary rule
 
-428 people keep their cohort (A 90, B 132, C 206). The 31 who do not, with
-reasons — every one is an intended effect of a review fix:
+Published A/B/C (query 02 demand basis: first-ever placement in window, Level 3
+excluded) → master primary cohort. Row and column totals are the arithmetic;
+nothing is summarised by hand.
 
-- **19 absent from the master extract.** All have zero days in care before
-  placement and all are NEW PLACEMENT; 15 were admitted in the first year of
-  the window. Their approval predates 2021-04-01, so under the temporal
-  alignment their demand arose before the window and they are excluded from
-  A/C — exactly as an equivalent never-placed person is excluded from D.
-  (Confirm by pulling `first_approval_dt` for these PHNs; a handful may
-  instead have pre-window residential history under the widened historical
-  vocabulary, which is the same class of exclusion.)
-- **12 in the extract with no cohort.** 11 became UNRESOLVED: the earlier
-  anchor shifted their three-year lookback onto years for which they have no
-  registry address (short registry histories, 1–4 years). 1 became Cochrane
-  catchment rather than Town.
-- **2 moved A → B.** Under both residency rules they were not Cochrane
-  residents three years before their approval; they were three years before
-  their admission 12–16 months later.
+| published \ master | A | B | C | D | none | absent | TOTAL |
+|---|---|---|---|---|---|---|---|
+| A | 87 | 5 | 0 | 0 | 3 | 2 | 97 |
+| B | 0 | 132 | 0 | 0 | 7 | 5 | 144 |
+| C | 0 | 0 | 191 | 0 | 17 | 12 | 220 |
+| **TOTAL** | 87 | 137 | 191 | 0 | 27 | 19 | **461** |
 
-## Left-truncation
+**Kept cohort 410 of 461; changed or absent 51.** On the sensitivity rule the
+same matrix keeps 428 of 461 with 33 changed — the reviewer's arithmetic; an
+earlier message's "428 of 459, 31" was a miscount.
 
-1 person flagged. With approval as the demand event, a pre-window approval is
-an exclusion, not a flag — see the 19 absent above.
+Every off-diagonal cell, with its reason from the extract:
 
-## Unresolved residency — what rev 2.1 got wrong and rev 2.2 fixed
+| From → to | n | Reason |
+|---|---|---|
+| C → none | 14 | latest address not Cochrane (any-3-year said Town) — the residency-rule change |
+| C → absent | 12 | not in master: approval before the window, or already in residential care at the demand event |
+| B → none | 6 | unresolved at the earlier anchor (registry record, no year in lookback) |
+| B → absent | 5 | not in master, as above |
+| A → B | 3 | latest address not Cochrane (any-3-year said Town) |
+| A → B | 2 | not Cochrane under both rules at the earlier anchor |
+| A → absent | 2 | not in master, as above |
+| A → none | 2 | unresolved at the earlier anchor |
+| C → none | 2 | unresolved at the earlier anchor |
+| C → none | 1 | now Cochrane catchment |
+| B → none | 1 | unresolved (no registry record) |
+| A → none | 1 | now Cochrane catchment |
 
-Rev 2.1 kept every unresolved person in the province in the output (526 of
-1,139 rows; 490 with no Cochrane link at all) and the checker then printed
-"upper bound on D: 188". That number is meaningless. Rev 2.2 keeps an
-unresolved person only with a recorded Cochrane request or a Cochrane
-placement.
-
-Rev 2.2 run: 40 unresolved of 653 (6.1%) — 30 with a registry record but no
-year in the lookback, 10 with no registry record, 0 postal-mapping failures.
-All 40 carry a Cochrane signal. Of them, 9 are approved and unplaced: the
-upper-bound add to D. Consistent with the published cohort's 5% LOW-confidence
-share.
+The 19 absent all have zero days in care before placement and 15 were admitted
+in the first year of the window: pre-window approvals, excluded by design.
+Confirm by pulling `first_approval_dt` and `first_residential_ever` for those
+19 PHNs.
 
 ## Status
 
-- Cohort D is **measurable and reconciled**, but **not signed off**.
-- Do not quote A + C + D, any D figure, or "X% of Cochrane demand was unmet"
-  until the reviewer has read this file.
-- Every D figure carries "in the Calgary and Edmonton Strata instances".
-
-## For the reviewer
-
-1. Is the temporal alignment as implemented — demand arising in the window,
-   pre-window approvals excluded from A/C and D alike — the definition you
-   want? It moves the published A/C by −7 / −12.
-2. Residency rule: any-address-in-three-years (published) or latest address?
-   The difference is 26 people, all one direction.
-3. D3 = 34 with the zone caveat. Is that quotable as an upper bound, or does
-   it wait for a Central-zone source?
+- Cohort D is **measurable, reconciled, reproducible on two runs, and not
+  signed off.**
+- Primary figures for the reviewer: **A 87 · B 137 · C 191 · D 68 (12 / 25 /
+  31)**; resident demand 346; sensitivity 372.
+- Nothing here goes into the report until the reviewer clears it, and every D
+  figure carries "no Type A/B placement observed in the Calgary/Edmonton
+  Strata placement source by 31 March 2026".
+- Rev 2.3 still to run: adds the fallback residency tier and the
+  already-in-care-at-demand test (zero rows affected on this data).

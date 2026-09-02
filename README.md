@@ -7,16 +7,19 @@ Everything here is reproducible from the SQL extracts and the two analysis
 scripts. Every published figure traces to a numbered block in
 `sql/01_demand_capacity_report.sql`.
 
-> **Status (2026-09-02, after the first real run).** A, B and C are
-> **provisional**. **Cohort D is measurable and reconciled but not signed off.
-> Do not use A + C + D. Do not call D validated.** `sql/09` has been run against
-> the warehouse twice (rev 2.1 and rev 2.2, identical A–D) and all thirteen
-> integrity checks pass on both; the
-> results, the reconciliation against the published A/B/C, and three
-> definitional questions for the reviewer are in
-> `reference/master_cohort_run_2026-09-02.md`. Headline on that run: resident
-> demand A + C + D = 90 + 208 + 74 = 372; D splits 14 still waiting / 26 died /
-> 34 exited with no placement observed in this source.
+> **Status (2026-09-02, after third review).** A, B and C are **provisional**.
+> **Cohort D is measurable, reconciled and not signed off. Do not use
+> A + C + D. Do not call D validated.** The reviewer's decisions are adopted:
+> the cohort is *new Type A/B demand arising FY2022–FY2026*; residency primary
+> is the latest pre-demand address, with the published any-three-year rule as
+> sensitivity; D3 is quotable descriptively only, and the source-coverage
+> caveat applies to all of D. Primary figures on the current run: **A 87 ·
+> B 137 · C 191 · D 68 (12 still waiting / 25 died / 31 exited)**, resident
+> demand 346 (sensitivity 372). Full transition matrix against the published
+> A/B/C and every off-diagonal reason are in
+> `reference/master_cohort_run_2026-09-02.md`. `sql/09` rev 2.3 (fallback
+> residency, already-in-care tested at the demand event, no output filter) is
+> written and not yet run.
 > The word "province-wide" is **withdrawn permanently for this source**:
 > `sql/10_coverage_checks.sql` has been run and the admissions source is the
 > Calgary and Edmonton Strata instances only. Every D figure carries that
@@ -301,10 +304,15 @@ A/B/C. The first real run is recorded in
 moved or vanished in reconciliation is an intended effect of a review fix, and
 the file says which.
 
-Rev 2.2 changed one thing after that run: an unresolved-residency person is
-kept only with a recorded Cochrane request or a Cochrane placement. Rev 2.1
-kept every unresolved person in the province and made the upper bound on D
-meaningless (188); the honest figure on the same data is 8.
+Rev 2.2 gated the unresolved pool on a recorded Cochrane request. **That was
+a regression and is withdrawn in rev 2.3**: it is the request-based selection
+rule already rejected for D itself, and only 55% of known Town demand ever
+recorded a Cochrane request, so the gate biased the uncertainty downward. Rev
+2.3 returns the full audit universe with a `cochrane_facing` presentation
+flag, and resolves the unresolved further instead of dropping them —
+`residency_fallback` is the latest mapped address before the demand event at
+any distance, with its staleness reported. The checker reports D in tiers:
+primary, + fallback-Town, + truly unresolved (mathematical maximum).
 
 ### Not to be used yet
 
@@ -418,11 +426,8 @@ Not blocking anything published, but each would strengthen the case:
    admissions per 1,000 seniors — benchmarkable against comparable Alberta
    communities and projectable against the town's growth. Single most useful
    number not yet in hand, and it needs no external request.
-2. **Reviewer decisions** on the three questions at the end of
-   `reference/master_cohort_run_2026-09-02.md`: the temporal-alignment
-   definition (moves published A/C by −7 / −12), the residency rule (26
-   people, one direction), and whether D3 = 34 is quotable as an upper bound.
-   Rev 2.2 has been re-run and confirmed. Still for ALA: a Central-zone source; the Retired-DAL/DEL codes; which approval
+2. **Run `sql/09` rev 2.3** and the checker; report the three-tier D. Then
+   the reviewer's fourth pass. Still for ALA: a Central-zone source; the Retired-DAL/DEL codes; which approval
    field is operational. Waitlist history before 2021-04-01 would additionally
    resolve the 1,604 left-truncated people and turn the 138 displacement floor
    into a count.
