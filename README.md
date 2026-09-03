@@ -17,12 +17,13 @@ scripts. Every published figure traces to a numbered block in
 > building normalisation are audit / QA flags only. Unresolved approved
 > unplaced 9 (was 11); D maximum 78.
 >
-> **Deliverable phase** (2026-09-03): `sql/13` inventories demographics,
-> PHN↔PATIENT_ID linkage, origin vocabulary and community columns;
-> `analysis/08` builds the person and event deliverables with QA gates and
-> reproduces 89/148/192/69 on today's extract. Plan and open decisions in
-> `reference/deliverable_design.md`. Nothing is published until the reviewer
-> clears the pre-check.
+> **Deliverable phase** (2026-09-03): person (`sql/14`), placement-event
+> (`sql/15`) and waitlist-spell (`sql/16`) extracts run; `analysis/08` builds
+> the internal and consultant files with 30 QA gates, reproduces 89/148/192/69,
+> and reconciles events and spells back to the person grain. Consultant scope
+> 987. Findings, decisions and the reviewer's ten corrections are in
+> `reference/deliverable_design.md`. Nothing is external until the reviewer
+> clears `REVIEWER_PRECHECK.md`.
 >
 > Earlier status, rev 2.7 run — all seven gates closed: Definitions:
 > *new Type A/B demand arising FY2022–FY2026*; residency = registry latest

@@ -26,6 +26,6 @@ select s.phn,
 from scope s
 join epic_phn e on e.phn = s.phn
 join db_source_epic_clarity.raw.patient p on p.pat_id = e.pat_id
-left join db_source_epic_clarity.raw.zc_sex z on z.sex_c = p.sex_c
+left join db_source_epic_clarity.raw.zc_sex z on z.rcpt_mem_sex_c = p.sex_c   -- key confirmed by the user 2026-09-03
 where length(s.phn) = 9
 group by s.phn;
