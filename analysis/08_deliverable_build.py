@@ -164,6 +164,11 @@ def load_person(path, salt):
         d["COCHRANE_PLACEMENT_RESIDENCY_UNRESOLVED"] = col(r, "COCHRANE_PLACEMENT_RESIDENCY_UNRESOLVED", "0")
         d["B_CATCHMENT"] = col(r, "B_CATCHMENT", "0")
         d["PHN_PATIENT_ID_MULTIPLICITY"] = col(r, "PHN_PATIENT_ID_MULTIPLICITY")
+        d["PATIENT_ID_ALL"] = col(r, "PATIENT_ID_ALL"); d["N_PATIENT_IDS"] = col(r, "N_PATIENT_IDS")
+        d["DOB_STRATA"] = col(r, "DOB_STRATA")[:10]; d["DOB_REGISTRY"] = col(r, "DOB_REGISTRY")[:10]
+        d["DOB_SOURCES_AGREE"] = col(r, "DOB_SOURCES_AGREE"); d["SEX_CONFLICT_REGISTRY"] = col(r, "SEX_CONFLICT_REGISTRY")
+        d["RESIDENCE_LOCAL_NAME_AT_DEMAND"] = col(r, "RESIDENCE_LOCAL_NAME_AT_DEMAND"); d["ORIGIN_CENSUS_DATE"] = col(r, "ORIGIN_CENSUS_DATE")[:10]
+        d["REQUESTED_COCHRANE_SITES"] = col(r, "REQUESTED_COCHRANE_SITES")
         d["_valid"] = d["IN_WINDOW"] == "1" and d["WAS_APPROVED"] == "1" and d["RECORD_VALID"] == "1"
         # population label: the cohorts plus the two descriptive groups the request implies
         if d["COHORT"]: pop = d["COHORT"]
@@ -176,7 +181,7 @@ def load_person(path, salt):
     return P, have
 
 # ── QA assertions (item 12) ───────────────────────────────────────────────────
-def qa(P, expect, have):
+def qa(P, expect, have, E=None):
     out = []; fail = 0
     def chk(label, n, must_zero=True):
         nonlocal fail
@@ -205,6 +210,17 @@ def qa(P, expect, have):
     chk("negative age at any event", sum(1 for p in D for k in ("AGE_AT_DEMAND", "AGE_AT_FIRST_WAITLIST", "AGE_AT_PLACEMENT") if p[k] is not None and p[k] < 0))
     chk("Strata placeholder address used to resolve residency", sum(1 for p in D if p["RESIDENCY_SOURCE"] == "STRATA_ADDRESS_H" and p["STRATA_ADDRESS_IS_PLACEHOLDER"] == "1"))
     chk("community populated from a non-deciding address (source unresolved but community set)", sum(1 for p in D if p["RESIDENCY_FINAL"] == UNRES and p["RESIDENCE_COMMUNITY_AT_DEMAND"]))
+    if E is not None:
+        first_ev = {(e["PHN"], e["_ad"]) for e in E}
+        placed = [p for p in coh if p["_pl"]]
+        chk("placed A-D people whose first placement is absent from the event table", sum(1 for p in placed if (p["PHN"], p["_pl"]) not in first_ev))
+        chk("event rows flagged IS_FIRST_PLACEMENT != placed A-D people", abs(sum(1 for e in E if e["IS_FIRST_PLACEMENT"] == "1" and e["PERSON_COHORT"]) - len(placed)))
+        chk("event before 2021-04-01 or after 2026-03-31", sum(1 for e in E if e["_ad"] and not (WIN_START <= e["_ad"] <= FOLLOW_UP)))
+        chk("event with no PHN", sum(1 for e in E if not e["PHN"]))
+    if "PATIENT_ID" in have:
+        chk("deliverable person without a Strata PATIENT_ID", sum(1 for p in D if not p["PATIENT_ID"]))
+    if "DOB_SOURCES_AGREE" in have:
+        pass
     # the validated headline must be reproduced exactly
     got = (c["A"], c["B"], c["C"], c["D"])
     chk(f"A/B/C/D differs from accepted {expect} (got {got})", 0 if got == tuple(expect) else 1)
@@ -242,10 +258,13 @@ def summaries(P, E):
         ys = [p for p in coh if p["_pl"] and (y == "**Total**" or p["PLACEMENT_FYE"] == y)]
         inc = [p for p in ys if p["FIRST_PLACEMENT_IN_COCHRANE"] == "1"]
         ev = [e for e in E if y == "**Total**" or e["ADMISSION_FYE"] == y] if E else None
-        rows.append([y, len(ys), (len(ev) if ev is not None else "n/a"), len(inc),
+        ev_abcd = [e for e in ev if e["PERSON_COHORT"]] if ev is not None else None
+        ev_coch = [e for e in ev if e["PLACEMENT_IN_COCHRANE"] == "1"] if ev is not None else None
+        rows.append([y, len(ys), (len(ev_abcd) if ev_abcd is not None else "n/a"),
+                     (f"{len(ev_coch)} events / {len({e['PHN'] for e in ev_coch})} people" if ev_coch is not None else "n/a"), len(inc),
                      sum(1 for p in ys if p["FIRST_PLACEMENT_STREAM"] == "Type A"), sum(1 for p in ys if p["FIRST_PLACEMENT_STREAM"] == "Type B"),
                      sum(1 for p in inc if p["COHORT"] == "A"), sum(1 for p in inc if p["COHORT"] == "B"), sum(1 for p in inc if p["B_CATCHMENT"] == "1")])
-    S.append(md_table(["FYE", "unique people placed (first placement)", "placement events (all admissions)", "Cochrane placements", "Type A", "Type B",
+    S.append(md_table(["FYE", "unique people placed (first placement)", "placement events of A-D people (all sites)", "Cochrane-site events, all people (events / people)", "Cochrane first placements (A+B)", "Type A", "Type B",
                        "Town residents placed in Cochrane (A)", "non-Town placed in Cochrane (B)", "of B: catchment"], rows))
     # wait time
     S.append("## 3. Time to placement — people with an observed qualifying placement only (A, B, C)\n")
@@ -305,6 +324,9 @@ def load_events(path, salt, byphn):
         d["RESIDENCY_FINAL"] = p["RESIDENCY_FINAL"] if p else ""; d["RESIDENCY_SOURCE"] = p["RESIDENCY_SOURCE"] if p else ""
         d["RESIDENCE_CLASS"] = ("Town" if d["RESIDENCY_FINAL"] == TOWN else "Cochrane catchment" if d["RESIDENCY_FINAL"] == AREA else "non-Town" if d["RESIDENCY_FINAL"] == NOT else "unresolved") if p else "not in person table"
         d["PERSON_COHORT"] = p["COHORT"] if p else ""; d["PERSON_DEMAND_DT"] = p["DEMAND_DT"] if p else ""
+        d["PERSON_POPULATION"] = p["POPULATION"] if p else ""
+        d["PERSON_IN_DELIVERABLE"] = "1" if (p and p["POPULATION"]) else "0"
+        d["_ad"] = ad
         E.append(d)
     return E
 
@@ -313,11 +335,11 @@ INTERNAL_DROP = {k for k in ()}   # everything stays in the internal file
 CONSULTANT = ["STUDY_ID", "POPULATION", "COHORT", "D_CLASS", "DEMAND_DT", "DEMAND_FYE", "DEMAND_EVENT_TYPE", "FIRST_WAITLIST_APPEARANCE",
               "FIRST_APPROVAL_DT", "LAST_SEEN_ON_LIST", "ON_LIST_AT_FOLLOWUP", "AGE_AT_DEMAND", "AGE_AT_FIRST_WAITLIST", "AGE_AT_PLACEMENT",
               "AGE_GROUP_AT_DEMAND", "SEX", "RESIDENCY_FINAL", "RESIDENCE_COMMUNITY_AT_DEMAND", "COCHRANE_TOWN_FLAG", "COCHRANE_CATCHMENT_FLAG",
-              "ORIGIN_SETTING", "ORIGIN_SETTING_DETAIL", "ORIGIN_SITE", "REQUESTED_SITE", "REQUESTED_CARE_STREAM", "REQUESTED_COCHRANE_FLAG",
+              "RESIDENCE_LOCAL_NAME_AT_DEMAND", "ORIGIN_SETTING", "ORIGIN_SETTING_DETAIL", "ORIGIN_SITE", "REQUESTED_SITE", "REQUESTED_CARE_STREAM", "REQUESTED_COCHRANE_FLAG",
               "N_SITES_REQUESTED", "FIRST_PLACEMENT_DT", "PLACEMENT_FYE", "FIRST_PLACEMENT_SITE", "FIRST_PLACEMENT_STREAM", "FIRST_PLACEMENT_IN_COCHRANE",
               "DAYS_TO_PLACEMENT", "DAYS_WAITING_AS_OF_FOLLOWUP"]
 EVENT_CONSULTANT = ["STUDY_ID", "ADMISSION_DT", "ADMISSION_FYE", "PLACEMENT_SITE", "CARE_STREAM", "PLACEMENT_IN_COCHRANE", "ORIGIN_SETTING",
-                    "ORIGIN_SETTING_DETAIL", "IS_FIRST_PLACEMENT", "RESIDENCE_CLASS", "PERSON_COHORT"]
+                    "ORIGIN_SETTING_DETAIL", "IS_FIRST_PLACEMENT", "RESIDENCE_CLASS", "PERSON_COHORT", "PERSON_POPULATION"]
 def write_csv(path, rows, fields):
     with open(path, "w", newline="") as f:
         w = csv.writer(f); w.writerow(fields)
@@ -328,7 +350,7 @@ def main(a):
     P, have = load_person(a.person, salt)
     byphn = {p["PHN"]: p for p in P}
     E = load_events(a.events, salt, byphn) if a.events else None
-    checks, ok = qa(P, tuple(int(x) for x in a.expect.split(",")), have)
+    checks, ok = qa(P, tuple(int(x) for x in a.expect.split(",")), have, E)
     os.makedirs(a.out, exist_ok=True)
     D = [p for p in P if p["POPULATION"]]
     coh = [p for p in P if p["COHORT"]]
@@ -341,12 +363,17 @@ def main(a):
     R.append(f"1. **Person-level rows:** universe {len(P):,}; deliverable population (A-D plus descriptive groups) {len(D):,}; A+B+C+D {len(coh):,}\n")
     R.append(f"2. **A/B/C/D:** {c['A']} / {c['B']} / {c['C']} / {c['D']} — resident demand {c['A']+c['C']+c['D']}\n")
     R.append(f"3. **D1/D2/D3:** {dc['D1']} / {dc['D2']} / {dc['D3']}\n")
-    R.append("4. **Annual demand counts** and 5. **annual placement counts**: sections 1 and 2 of COCHRANE_SUMMARY.md\n")
-    R.append(f"6. **Demographic completeness (A-D):** DOB {sum(1 for p in coh if p['DOB'])}/{len(coh)}; sex/gender {sum(1 for p in coh if p['SEX'])}/{len(coh)}\n")
+    R.append("4. **Annual demand counts** and 5. **annual placement counts**: sections 1 and 2 of COCHRANE_SUMMARY.md"
+             + (f" — event table {len(E):,} qualifying admissions, {len({e['PHN'] for e in E}):,} people; Cochrane-site events {sum(1 for e in E if e['PLACEMENT_IN_COCHRANE']=='1'):,}; events of A-D people {sum(1 for e in E if e['PERSON_COHORT']):,}" if E else " — event table not supplied") + "\n")
+    R.append(f"6. **Demographic completeness (A-D):** DOB {sum(1 for p in coh if p['DOB'])}/{len(coh)} (source: " + ", ".join(f"{k or 'none'} {v}" for k, v in Counter(p['DEMOGRAPHIC_SOURCE'] for p in coh).most_common()) + f"); sex/gender {sum(1 for p in coh if p['SEX'])}/{len(coh)}"
+             + (f"; DOB in both sources {sum(1 for p in coh if p['DOB_SOURCES_AGREE'] != '')}, agree {sum(1 for p in coh if p['DOB_SOURCES_AGREE'] == '1')}, disagree {sum(1 for p in coh if p['DOB_SOURCES_AGREE'] == '0')}" if "DOB_SOURCES_AGREE" in have else "")
+             + (f"; registry sex conflicts {sum(1 for p in coh if p['SEX_CONFLICT_REGISTRY'] == '1')}" if "SEX_CONFLICT_REGISTRY" in have else "") + "\n")
     R.append("7. **Age distribution:** " + (", ".join(f"{k} {v}" for k, v in sorted(Counter(p['AGE_GROUP_AT_DEMAND'] or '(missing)' for p in coh).items())) ) + "\n")
     R.append(f"8. **Residence-community completeness (A-D):** {sum(1 for p in coh if p['RESIDENCE_COMMUNITY_AT_DEMAND'])}/{len(coh)}; RESIDENCY_FINAL known {sum(1 for p in coh if p['RESIDENCY_FINAL'] != UNRES)}/{len(coh)}\n")
     R.append(f"9. **Origin-setting completeness (A-D):** {sum(1 for p in coh if p['ORIGIN_SETTING'] != 'Unknown')}/{len(coh)}; source = " + "; ".join(f"{k} ({v})" for k, v in Counter(p['ORIGIN_SOURCE'] for p in coh).most_common()) + "\n")
-    R.append("10. **PHN <-> Strata PATIENT_ID linkage:** " + ("; ".join(f"{k or 'unstated'} {v}" for k, v in Counter(p['PHN_PATIENT_ID_MULTIPLICITY'] for p in coh).most_common()) if "PHN_PATIENT_ID_MULTIPLICITY" in have else "not in this extract — sql/13 block 1 reports it") + "\n")
+    R.append("10. **PHN <-> Strata PATIENT_ID linkage (A-D):** " + ("; ".join(f"{k or 'unstated'} {v}" for k, v in Counter(p['PHN_PATIENT_ID_MULTIPLICITY'] for p in coh).most_common())
+             + f"; universe: " + "; ".join(f"{k or 'unstated'} {v}" for k, v in Counter(p['PHN_PATIENT_ID_MULTIPLICITY'] for p in P).most_common())
+             + ". PATIENT_ID -> PHN is one-to-one by construction (one IDENTIFIER1 per patient row). Canonical ID = the one carrying waitlist/admission activity, never MIN." if "PHN_PATIENT_ID_MULTIPLICITY" in have else "not in this extract — sql/13 block 1 reports it") + "\n")
     R.append("11. **Reconciliation checks:**\n\n" + md_table(["check", "n", "result"], [[l, n, s] for l, n, s in checks]))
     R.append(f"12. **Change to the validated headline caused by enrichment:** " + ("none — A/B/C/D reproduced exactly" if ok else "**STOP — see failed checks above**") + "\n")
     open(os.path.join(a.out, "REVIEWER_PRECHECK.md"), "w").write("\n".join(R))
@@ -357,8 +384,9 @@ def main(a):
     write_csv(os.path.join(a.out, "COCHRANE_DEMAND_INTERNAL_QA.csv"), D, internal_fields)
     write_csv(os.path.join(a.out, "COCHRANE_DEMAND_CONSULTANT.csv"), D, CONSULTANT)
     if E:
-        write_csv(os.path.join(a.out, "COCHRANE_PLACEMENT_ACTIVITY_INTERNAL.csv"), E, list(E[0].keys()))
-        write_csv(os.path.join(a.out, "COCHRANE_PLACEMENT_ACTIVITY_CONSULTANT.csv"), E, EVENT_CONSULTANT)
+        Ev = [e for e in E if e["PLACEMENT_IN_COCHRANE"] == "1" or e["PERSON_IN_DELIVERABLE"] == "1"]
+        write_csv(os.path.join(a.out, "COCHRANE_PLACEMENT_ACTIVITY_INTERNAL.csv"), Ev, [k for k in E[0].keys() if not k.startswith("_")])
+        write_csv(os.path.join(a.out, "COCHRANE_PLACEMENT_ACTIVITY_CONSULTANT.csv"), Ev, EVENT_CONSULTANT)
     head = "# Cochrane continuing-care demand — summary tables\n\nTwo time bases are used and never mixed: **DEMAND_FYE** (year the Type A/B demand arose) and **PLACEMENT_FYE** (year of the first observed placement). Person grain unless a column says events.\n\n"
     open(os.path.join(a.out, "COCHRANE_SUMMARY.md"), "w").write(head + summaries(P, E))
     print("\n".join(R)); print(f"\nwritten to {a.out}/: " + ", ".join(sorted(os.listdir(a.out))))

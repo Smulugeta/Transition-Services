@@ -28,8 +28,8 @@ the final deliverable and records every decision that is still open.
 | Step | Artefact | State |
 |---|---|---|
 | 0 | `sql/13_enrichment_inventory.sql` — schemas, PHN↔PATIENT_ID multiplicity, origin vocabulary, placeholder addresses, rated sites, demographic completeness, community-name column | **written; awaiting results** |
-| 1 | `sql/14_deliverable_person.sql` — sql/09 rev 2.9 plus enrichment columns (below) | to write after step 0 |
-| 2 | `sql/15_deliverable_events.sql` — one row per qualifying Type A/B admission for the universe | to write after step 0 |
+| 1 | `sql/14_deliverable_person.sql` — sql/09 rev 2.9 plus enrichment columns (below); classification CTE verified byte-identical | **written; awaiting run** |
+| 2 | `sql/15_deliverable_events.sql` — one row per qualifying Type A/B admission in the window, all people; builder scopes the views | **written; awaiting run** |
 | 3 | `analysis/08_deliverable_build.py` — STUDY_ID, QA assertions, four deliverable files, reviewer pre-check | **written; runs today on the rev 2.9 export** with every enrichment field reported as missing |
 | 4 | reviewer pre-check (the 12 items) | provisional version produced; final after steps 1–2 |
 | 5 | publish `COCHRANE_DEMAND_CONSULTANT`, `COCHRANE_PLACEMENT_ACTIVITY`, `COCHRANE_SUMMARY` | not before the reviewer clears step 4 |
