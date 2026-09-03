@@ -1,6 +1,6 @@
 -- ============================================================================
 -- MASTER DEMAND COHORT — A / B / C / D — STANDALONE, ONE ROW PER PERSON
--- Revision 2.8: building-level facility guard; CONFLICT blocks Strata; registry PHN validation. Paste-and-run.
+-- Revision 2.8.1: as 2.8, with every correlated scalar subquery rewritten as a pre-aggregated join. Paste-and-run.
 -- Feed the CSV to analysis/07_master_cohort_check.py.
 --
 -- WHAT CHANGED AND WHY (each item is a review finding)
@@ -87,6 +87,23 @@
 --     years old (median 16). It does not remove anyone from the residency
 --     uncertainty around D; the maximum is primary D plus every valid
 --     unresolved approved-unplaced person.
+--
+-- REV 2.8.1 — SNOWFLAKE COMPATIBILITY ONLY (no logic change)
+--   Rev 2.8 failed with "Unsupported subquery type cannot be evaluated":
+--   Snowflake will not run a correlated scalar subquery whose predicate is a
+--   date range, and the LATERAL in geo was the same pattern. Every such
+--   subquery is now a pre-aggregated CTE joined back on a hash row key:
+--     geo                    - LATERAL replaced by a plain subquery
+--     strata_addr_b          - is_placeholder via LEFT JOIN + qualify
+--     epic_addr              - is_placeholder via LEFT JOIN + qualify
+--     strata_active          - strata_active_base + strata_conc_exact/bldg/civic
+--     strata_at_demand_alt   - strata_active_alt_base + strata_conc_*_alt
+--     epic_active            - epic_active_base + epic_conc_exact/bldg/civic
+--     epic_summary           - max_concurrent_any; threshold applied in
+--                              epic_at_demand via cross join w
+--   Concurrent-occupancy counts are the same quantity computed the same way;
+--   the checker (analysis/07, rev 8) recomputes the guard classes and must
+--   agree. Expected: production unchanged at 89/148/192/69.
 --
 -- REV 2.8 — SIXTH REVIEW
 --   · BUILDING-LEVEL FACILITY GUARD, Strata and Epic alike. The exact
@@ -372,15 +389,15 @@ geo as (
     -- truncated); 1-8 are padded because the registry stores PHN numerically.
     select iff(length(rd.digits) between 1 and 9, lpad(rd.digits, 9, '0'), null) as phn,
            iff(length(rd.digits) between 1 and 8, 1, 0)                     as phn_was_padded,
-           r.fye,
-           r.postal_cd,
+           rd.fye,
+           rd.postal_cd,
            iff(pc.postalcode is null, 0, 1)                            as mapped,
            iff(upper(trim(pc.csdname_2021)) = 'COCHRANE'
                and upper(trim(pc.csdtype_2021)) = 'T', 1, 0)           as in_town,
            iff(upper(trim(pc.local_name)) = 'COCHRANE | SPRINGBANK', 1, 0) as in_area
-    from db_source_ah_provincial_registry.curated.provincial_registry r
-    cross join lateral (select regexp_replace(r.phn::string,'[^0-9]','') as digits) rd
-    left join db_source_ah_postal_code.curated.tb_postal_code pc on pc.postalcode = r.postal_cd
+    from (select r.fye, r.postal_cd, regexp_replace(r.phn::string,'[^0-9]','') as digits
+          from db_source_ah_provincial_registry.curated.provincial_registry r) rd
+    left join db_source_ah_postal_code.curated.tb_postal_code pc on pc.postalcode = rd.postal_cd
     where length(rd.digits) between 1 and 9 and rd.digits <> '000000000'
 ),
 res_rows as (
@@ -511,8 +528,12 @@ strata_addr_b as (
            trim(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(k.bldg_key_raw,
              '\\bAVENUE\\b','AVE'),'\\bSTREET\\b','ST'),'\\bDRIVE\\b','DR'),'\\bROAD\\b','RD'),
              '\\bCRESCENT\\b','CRES'),'\\bBOULEVARD\\b','BLVD'))                   as bldg_key,
-           regexp_substr(trim(k.bldg_key_raw), '^[0-9]+')                    as civic
+           regexp_substr(trim(k.bldg_key_raw), '^[0-9]+')                    as civic,
+           iff(sp.pat is not null, 1, 0)                                      as is_placeholder
     from strata_addr_k k
+    left join strata_placeholder sp on upper(k.street_address) like sp.pat
+    qualify row_number() over (partition by k.phn, k.address_record_id, k.street_address, k.postal_norm,
+                                            k.eff_from, k.eff_to order by sp.pat) = 1
 ),
 -- ever-shared count kept for reporting only (was the guard before rev 2.6)
 strata_shared as (
@@ -524,36 +545,61 @@ strata_placeholder (pat) as (
     select * from values ('%NO FIXED%'),('%NFA%'),('%EVACUEE%'),('%UNKNOWN%'),('%HOMELESS%'),('%SHELTER%'),('%TRANSIENT%')
 ),
 -- all versions ACTIVE on the demand date (rules 3, 8), one row per version
+-- REV 2.8.1: correlated scalar subqueries are not supported by Snowflake in
+-- this shape ("Unsupported subquery type"). Concurrency is computed as
+-- pre-aggregated joins keyed on a row hash and joined back.
+strata_active_base as (
+    select hash(d.phn, a.address_record_id, a.street_address, a.postal_norm, a.eff_from, a.eff_to) as rk,
+           d.phn, d.demand_dt, a.street_address, a.city_name, a.postal_norm, a.eff_from, a.eff_to, a.created,
+           a.is_placeholder, a.bldg_key, a.civic
+    from demand_in_window d
+    join strata_addr_b a on a.phn = d.phn
+                        and a.eff_from <= d.demand_dt
+                        and (a.eff_to > d.demand_dt or a.eff_to is null)
+),
+strata_conc_exact as (       -- G4: distinct people holding THIS address on THIS day
+    select s.rk, count(distinct b.phn) as concurrent_n
+    from strata_active_base s
+    join strata_addr b on upper(b.street_address) = upper(s.street_address) and b.postal_norm = s.postal_norm
+                      and b.eff_from <= s.demand_dt and (b.eff_to > s.demand_dt or b.eff_to is null)
+    group by s.rk
+),
+strata_conc_bldg as (        -- REV 2.8: same BUILDING on this day
+    select s.rk, count(distinct b.phn) as building_concurrent_n
+    from strata_active_base s
+    join strata_addr_b b on b.bldg_key = s.bldg_key and b.postal_norm = s.postal_norm
+                        and b.eff_from <= s.demand_dt and (b.eff_to > s.demand_dt or b.eff_to is null)
+    group by s.rk
+),
+strata_conc_civic as (       -- REV 2.8: same civic number + postal (spelling variants)
+    select s.rk, count(distinct b.phn) as civic_concurrent_n
+    from strata_active_base s
+    join strata_addr_b b on b.civic = s.civic and s.civic is not null and b.postal_norm = s.postal_norm
+                        and b.eff_from <= s.demand_dt and (b.eff_to > s.demand_dt or b.eff_to is null)
+    group by s.rk
+),
 strata_active as (
-    select d.phn, d.demand_dt, a.street_address, a.city_name, a.postal_norm, a.eff_from, a.eff_to, a.created,
-           iff(exists (select 1 from strata_placeholder sp where upper(a.street_address) like sp.pat), 1, 0) as is_placeholder,
-           -- G4: distinct people holding THIS address on THIS day (exact string)
-           (select count(distinct b.phn) from strata_addr b
-             where upper(b.street_address) = upper(a.street_address) and b.postal_norm = a.postal_norm
-               and b.eff_from <= d.demand_dt and (b.eff_to > d.demand_dt or b.eff_to is null)) as concurrent_n,
-           -- REV 2.8: distinct people in the same BUILDING on this day
-           (select count(distinct b.phn) from strata_addr_b b
-             where b.bldg_key = a.bldg_key and b.postal_norm = a.postal_norm
-               and b.eff_from <= d.demand_dt and (b.eff_to > d.demand_dt or b.eff_to is null)) as building_concurrent_n,
-           (select count(distinct b.phn) from strata_addr_b b
-             where b.civic = a.civic and a.civic is not null and b.postal_norm = a.postal_norm
-               and b.eff_from <= d.demand_dt and (b.eff_to > d.demand_dt or b.eff_to is null)) as civic_concurrent_n,
-           a.bldg_key, a.civic,
+    select s.rk, s.phn, s.demand_dt, s.street_address, s.city_name, s.postal_norm, s.eff_from, s.eff_to, s.created,
+           s.is_placeholder,
+           coalesce(ce.concurrent_n, 1)          as concurrent_n,
+           coalesce(cb.building_concurrent_n, 1) as building_concurrent_n,
+           coalesce(cc.civic_concurrent_n, 1)    as civic_concurrent_n,
+           s.bldg_key, s.civic,
            pc.postalcode is not null                                  as mapped,
            case when pc.postalcode is not null and upper(trim(pc.csdname_2021)) = 'COCHRANE'
                      and upper(trim(pc.csdtype_2021)) = 'T'          then 'Town of Cochrane'
                 when pc.postalcode is not null
                      and upper(trim(pc.local_name)) = 'COCHRANE | SPRINGBANK' then 'Cochrane catchment'
                 when pc.postalcode is not null                       then 'Not a Cochrane-area resident'
-                when a.postal_norm is not null and left(a.postal_norm,1) <> 'T'
+                when s.postal_norm is not null and left(s.postal_norm,1) <> 'T'
                                                                      then 'Not a Cochrane-area resident'
                 else 'UNRESOLVED' end                                 as class_raw
-    from demand_in_window d
-    join strata_addr_b a on a.phn = d.phn
-                        and a.eff_from <= d.demand_dt
-                        and (a.eff_to > d.demand_dt or a.eff_to is null)
+    from strata_active_base s
+    left join strata_conc_exact ce on ce.rk = s.rk
+    left join strata_conc_bldg  cb on cb.rk = s.rk
+    left join strata_conc_civic cc on cc.rk = s.rk
     left join db_source_ah_postal_code.curated.tb_postal_code pc
-           on upper(regexp_replace(pc.postalcode, '[^A-Za-z0-9]', '')) = a.postal_norm
+           on upper(regexp_replace(pc.postalcode, '[^A-Za-z0-9]', '')) = s.postal_norm
 ),
 -- G2: how many were active, and do they disagree on class?
 strata_active_summary as (
@@ -592,34 +638,56 @@ strata_active_alt_all as (
 strata_alt_summary as (
     select phn, iff(count(distinct class_raw) > 1, 1, 0) as classes_disagree_alt from strata_active_alt_all group by phn
 ),
+strata_active_alt_base as (
+    select hash(d.phn, a.address_record_id, a.street_address, a.postal_norm, a.eff_from, a.eff_to) as rk,
+           d.phn, d.demand_dt_alt, a.postal_norm, a.street_address, a.eff_from, a.is_placeholder, a.bldg_key, a.civic
+    from demand_in_window d
+    join strata_addr_b a on a.phn = d.phn
+                        and a.eff_from <= d.demand_dt_alt
+                        and (a.eff_to > d.demand_dt_alt or a.eff_to is null)
+),
+strata_conc_exact_alt as (
+    select s.rk, count(distinct b.phn) as concurrent_n
+    from strata_active_alt_base s
+    join strata_addr b on upper(b.street_address) = upper(s.street_address) and b.postal_norm = s.postal_norm
+                      and b.eff_from <= s.demand_dt_alt and (b.eff_to > s.demand_dt_alt or b.eff_to is null)
+    group by s.rk
+),
+strata_conc_bldg_alt as (
+    select s.rk, count(distinct b.phn) as building_concurrent_n
+    from strata_active_alt_base s
+    join strata_addr_b b on b.bldg_key = s.bldg_key and b.postal_norm = s.postal_norm
+                        and b.eff_from <= s.demand_dt_alt and (b.eff_to > s.demand_dt_alt or b.eff_to is null)
+    group by s.rk
+),
+strata_conc_civic_alt as (
+    select s.rk, count(distinct b.phn) as civic_concurrent_n
+    from strata_active_alt_base s
+    join strata_addr_b b on b.civic = s.civic and s.civic is not null and b.postal_norm = s.postal_norm
+                        and b.eff_from <= s.demand_dt_alt and (b.eff_to > s.demand_dt_alt or b.eff_to is null)
+    group by s.rk
+),
 strata_at_demand_alt as (
-    select d.phn, a.postal_norm, a.street_address, ss.classes_disagree_alt,
-           iff(exists (select 1 from strata_placeholder sp where upper(a.street_address) like sp.pat), 1, 0) as is_placeholder,
-           (select count(distinct b.phn) from strata_addr b
-             where upper(b.street_address) = upper(a.street_address) and b.postal_norm = a.postal_norm
-               and b.eff_from <= d.demand_dt_alt and (b.eff_to > d.demand_dt_alt or b.eff_to is null)) as concurrent_n,
-           (select count(distinct b.phn) from strata_addr_b b
-             where b.bldg_key = a.bldg_key and b.postal_norm = a.postal_norm
-               and b.eff_from <= d.demand_dt_alt and (b.eff_to > d.demand_dt_alt or b.eff_to is null)) as building_concurrent_n,
-           (select count(distinct b.phn) from strata_addr_b b
-             where b.civic = a.civic and a.civic is not null and b.postal_norm = a.postal_norm
-               and b.eff_from <= d.demand_dt_alt and (b.eff_to > d.demand_dt_alt or b.eff_to is null)) as civic_concurrent_n,
+    select s.phn, s.postal_norm, s.street_address, ss.classes_disagree_alt, s.is_placeholder,
+           coalesce(ce.concurrent_n, 1)          as concurrent_n,
+           coalesce(cb.building_concurrent_n, 1) as building_concurrent_n,
+           coalesce(cc.civic_concurrent_n, 1)    as civic_concurrent_n,
            case when pc.postalcode is not null and upper(trim(pc.csdname_2021)) = 'COCHRANE'
                      and upper(trim(pc.csdtype_2021)) = 'T'          then 'Town of Cochrane'
                 when pc.postalcode is not null
                      and upper(trim(pc.local_name)) = 'COCHRANE | SPRINGBANK' then 'Cochrane catchment'
                 when pc.postalcode is not null                       then 'Not a Cochrane-area resident'
-                when a.postal_norm is not null and left(a.postal_norm,1) <> 'T'
+                when s.postal_norm is not null and left(s.postal_norm,1) <> 'T'
                                                                      then 'Not a Cochrane-area resident'
                 else 'UNRESOLVED' end                                 as class_raw
-    from demand_in_window d
-    join strata_addr_b a on a.phn = d.phn
-                        and a.eff_from <= d.demand_dt_alt
-                        and (a.eff_to > d.demand_dt_alt or a.eff_to is null)
-    join strata_alt_summary ss on ss.phn = d.phn
+    from strata_active_alt_base s
+    join strata_alt_summary ss on ss.phn = s.phn
+    left join strata_conc_exact_alt ce on ce.rk = s.rk
+    left join strata_conc_bldg_alt  cb on cb.rk = s.rk
+    left join strata_conc_civic_alt cc on cc.rk = s.rk
     left join db_source_ah_postal_code.curated.tb_postal_code pc
-           on upper(regexp_replace(pc.postalcode, '[^A-Za-z0-9]', '')) = a.postal_norm
-    qualify row_number() over (partition by d.phn order by a.eff_from desc, a.postal_norm) = 1
+           on upper(regexp_replace(pc.postalcode, '[^A-Za-z0-9]', '')) = s.postal_norm
+    qualify row_number() over (partition by s.phn order by s.eff_from desc, s.postal_norm) = 1
 ),
 -- rule 9: nothing active at demand, but an older address exists
 strata_historical as (
@@ -648,10 +716,17 @@ epic_addr as (
            a.eff_end_date::date                                    as eff_to,
            iff(upper(a.addr_hx_line1) like 'PO BOX%' or upper(a.addr_hx_line1) like 'P.O. BOX%'
                or upper(a.addr_hx_line1) like 'BOX %', 1, 0)        as is_pobox,
-           iff(exists (select 1 from strata_placeholder sp where upper(a.addr_hx_line1) like sp.pat), 1, 0) as is_placeholder
+           iff(sp.pat is not null, 1, 0)                            as is_placeholder
     from db_source_epic_clarity.raw.pat_addr_chng_hx a
     join epic_phn e on e.pat_id = a.pat_id
+    left join strata_placeholder sp on upper(a.addr_hx_line1) like sp.pat
     where a.addr_hx_line1 is not null or a.zip_hx is not null
+    -- one row per distinct (phn, address, dates); exact raw duplicates collapse here,
+    -- which matches the hash key used in epic_active_base
+    qualify row_number() over (partition by e.phn, trim(a.addr_hx_line1), trim(a.city_hx),
+                                            upper(regexp_replace(a.zip_hx,'[^A-Za-z0-9]','')),
+                                            a.eff_start_date::date, a.eff_end_date::date
+                               order by sp.pat) = 1
 ),
 epic_addr_b as (
     select a.*,
@@ -670,36 +745,58 @@ epic_addr_b as (
     from epic_addr a
 ),
 epic_addr_c as (select b.*, regexp_substr(b.bldg_key, '^[0-9]+') as civic from epic_addr_b b),
-epic_active as (
-    select d.phn, d.demand_dt, a.line1, a.city, a.postal_norm, a.eff_from, a.eff_to, a.is_pobox, a.is_placeholder,
+epic_active_base as (
+    select hash(d.phn, a.line1, a.postal_norm, a.eff_from, a.eff_to) as rk,
+           d.phn, d.demand_dt, a.line1, a.city, a.postal_norm, a.eff_from, a.eff_to, a.is_pobox, a.is_placeholder,
            a.bldg_key, a.civic,
            iff(a.eff_from = m.max_start, 1, 0)                     as start_equals_source_max,
-           iff(a.eff_from in ('2019-08-16'::date, '2019-08-17'::date), 1, 0) as start_is_migration_date,
-           (select count(distinct b.phn) from epic_addr b
-             where upper(b.line1) = upper(a.line1) and b.postal_norm = a.postal_norm
-               and b.eff_from <= d.demand_dt and (b.eff_to > d.demand_dt or b.eff_to is null)) as concurrent_n,
-           -- REV 2.8: same building / same civic number on this day
-           (select count(distinct b.phn) from epic_addr_c b
-             where b.bldg_key = a.bldg_key and b.postal_norm = a.postal_norm
-               and b.eff_from <= d.demand_dt and (b.eff_to > d.demand_dt or b.eff_to is null)) as building_concurrent_n,
-           (select count(distinct b.phn) from epic_addr_c b
-             where b.civic = a.civic and a.civic is not null and b.postal_norm = a.postal_norm
-               and b.eff_from <= d.demand_dt and (b.eff_to > d.demand_dt or b.eff_to is null)) as civic_concurrent_n,
-           case when pc.postalcode is not null and upper(trim(pc.csdname_2021)) = 'COCHRANE'
-                     and upper(trim(pc.csdtype_2021)) = 'T'          then 'Town of Cochrane'
-                when pc.postalcode is not null
-                     and upper(trim(pc.local_name)) = 'COCHRANE | SPRINGBANK' then 'Cochrane catchment'
-                when pc.postalcode is not null                       then 'Not a Cochrane-area resident'
-                when a.postal_norm is not null and left(a.postal_norm,1) <> 'T'
-                                                                     then 'Not a Cochrane-area resident'
-                else 'UNRESOLVED' end                                 as class_raw
+           iff(a.eff_from in ('2019-08-16'::date, '2019-08-17'::date), 1, 0) as start_is_migration_date
     from demand_in_window d
     join epic_addr_c a on a.phn = d.phn
                       and a.eff_from <= d.demand_dt
                       and (a.eff_to > d.demand_dt or a.eff_to is null)
     cross join epic_src_max m
+),
+epic_conc_exact as (
+    select s.rk, count(distinct b.phn) as concurrent_n
+    from epic_active_base s
+    join epic_addr b on upper(b.line1) = upper(s.line1) and b.postal_norm = s.postal_norm
+                    and b.eff_from <= s.demand_dt and (b.eff_to > s.demand_dt or b.eff_to is null)
+    group by s.rk
+),
+epic_conc_bldg as (
+    select s.rk, count(distinct b.phn) as building_concurrent_n
+    from epic_active_base s
+    join epic_addr_c b on b.bldg_key = s.bldg_key and b.postal_norm = s.postal_norm
+                      and b.eff_from <= s.demand_dt and (b.eff_to > s.demand_dt or b.eff_to is null)
+    group by s.rk
+),
+epic_conc_civic as (
+    select s.rk, count(distinct b.phn) as civic_concurrent_n
+    from epic_active_base s
+    join epic_addr_c b on b.civic = s.civic and s.civic is not null and b.postal_norm = s.postal_norm
+                      and b.eff_from <= s.demand_dt and (b.eff_to > s.demand_dt or b.eff_to is null)
+    group by s.rk
+),
+epic_active as (
+    select s.*,
+           coalesce(ce.concurrent_n, 1)          as concurrent_n,
+           coalesce(cb.building_concurrent_n, 1) as building_concurrent_n,
+           coalesce(cc.civic_concurrent_n, 1)    as civic_concurrent_n,
+           case when pc.postalcode is not null and upper(trim(pc.csdname_2021)) = 'COCHRANE'
+                     and upper(trim(pc.csdtype_2021)) = 'T'          then 'Town of Cochrane'
+                when pc.postalcode is not null
+                     and upper(trim(pc.local_name)) = 'COCHRANE | SPRINGBANK' then 'Cochrane catchment'
+                when pc.postalcode is not null                       then 'Not a Cochrane-area resident'
+                when s.postal_norm is not null and left(s.postal_norm,1) <> 'T'
+                                                                     then 'Not a Cochrane-area resident'
+                else 'UNRESOLVED' end                                 as class_raw
+    from epic_active_base s
+    left join epic_conc_exact ce on ce.rk = s.rk
+    left join epic_conc_bldg  cb on cb.rk = s.rk
+    left join epic_conc_civic cc on cc.rk = s.rk
     left join db_source_ah_postal_code.curated.tb_postal_code pc
-           on upper(regexp_replace(pc.postalcode,'[^A-Za-z0-9]','')) = a.postal_norm
+           on upper(regexp_replace(pc.postalcode,'[^A-Za-z0-9]','')) = s.postal_norm
 ),
 epic_summary as (
     select phn,
@@ -707,8 +804,7 @@ epic_summary as (
            count(distinct class_raw)                               as n_classes,
            iff(count(distinct class_raw) > 1, 1, 0)                as classes_disagree,
            max(is_pobox) as any_pobox, max(is_placeholder) as any_placeholder,
-           max(iff(greatest(concurrent_n, building_concurrent_n, civic_concurrent_n)
-                   >= (select facility_min_patients from w), 1, 0))    as any_facility,   -- REV 2.8: building level
+           max(greatest(concurrent_n, building_concurrent_n, civic_concurrent_n)) as max_concurrent_any,
            max(building_concurrent_n)                              as max_building_concurrent_n,
            max(start_equals_source_max)                            as any_start_equals_source_max,
            max(start_is_migration_date)                            as any_start_is_migration_date,
@@ -716,15 +812,17 @@ epic_summary as (
     from epic_active group by phn
 ),
 epic_at_demand as (
-    select ea.*, es.n_active, es.classes_disagree, es.any_pobox, es.any_placeholder, es.any_facility,
+    select ea.*, es.n_active, es.classes_disagree, es.any_pobox, es.any_placeholder,
+           iff(es.max_concurrent_any >= w.facility_min_patients, 1, 0) as any_facility,   -- threshold applied here, no subquery
            es.any_start_equals_source_max, es.any_start_is_migration_date, es.max_building_concurrent_n,
            -- reviewer instruction 5: never choose between conflicting classes
            case when es.any_placeholder = 1 then 'NOT USED - placeholder address'
                 when es.any_pobox = 1       then 'NOT USED - PO Box'
-                when es.any_facility = 1    then 'NOT USED - facility address'
+                when es.max_concurrent_any >= w.facility_min_patients then 'NOT USED - facility address'
                 when es.classes_disagree = 1 then 'CONFLICT - active addresses disagree'
                 else es.class_if_unanimous end                       as epic_residency
     from epic_active ea join epic_summary es on es.phn = ea.phn
+    cross join w
     qualify row_number() over (partition by ea.phn order by ea.eff_from desc, ea.postal_norm) = 1
 ),
 
