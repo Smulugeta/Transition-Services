@@ -413,3 +413,27 @@ one exists, occupancy is an audit flag only; building normalisation QA only.
 - Expected: 89/148/192/69 (350). The rev 2.7 exact-address guard blocked 28
   addresses (27 not approved-and-unplaced; nearly all outside Cochrane); those
   now resolve, so any move will appear in the baseline diff with its address.
+
+### Rev 2.9 run — 2026-09-03 09:43 export, checker rev 9, baseline = rev 2.7 export
+
+All 27 integrity tests pass (new: no verdict reads `NOT USED - facility`).
+
+| | Rev 2.7 (accepted) | Rev 2.9 | Moves |
+|---|---|---|---|
+| A / B / C / D | 89 / 148 / 192 / 69 | 89 / 148 / 192 / 69 | **0 people change cohort** |
+| Resident demand | 350 | 350 | |
+| Strata-resolved residencies | 444 | 469 | +25, all outside the Cochrane area |
+| Unresolved, approved, unplaced | 11 | 9 | the two guard-blocked cases now resolve non-Town |
+| D mathematical maximum | 80 | 78 | |
+| PHN …4381 (107 1000 Glenhaven Way) | C | C | exact occupancy 1, building-key occupancy 16, verdict Town of Cochrane |
+
+Occupancy audit (G4): 25 production Strata resolutions carry the exact-address
+flag (≥ 3 concurrent); every one is outside the Cochrane area and none is in a
+cohort, so the flag cannot move A/B/C/D whichever way ALA rules on them. 0
+production resolutions match a named Cochrane-area site. The QA building key,
+if it were an exclusion, would still drop 177 resolutions and one C (the
+Glenhaven case) — it is not fit to exclude and is not used.
+
+Epic sensitivity, no occupancy exclusion: 90 / 149 / 194 / 69 (353); unresolved
+6; D maximum 75. Epic occupancy flag on 6,370 people in the universe, named
+facility candidate on 146 — audit only.

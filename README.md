@@ -7,14 +7,15 @@ Everything here is reproducible from the SQL extracts and the two analysis
 scripts. Every published figure traces to a numbered block in
 `sql/01_demand_capacity_report.sql`.
 
-> **Status (2026-09-03).** Production headline (rev 2.7) **accepted
-> mechanically by the reviewer**; sign-off record in
-> `reference/signoff_2026-09-02.md`. **Rev 2.8.3 was rejected**: its
-> occupancy-based building guard excluded a residential condominium and
-> mis-parsed numbered streets (production 349, D range 69–119). **Rev 2.9**
-> removes every occupancy-based exclusion from the residency hierarchy;
-> occupancy and building normalisation are audit / QA flags only. Awaiting
-> the rev 2.9 run to confirm the headline returns to 89/148/192/69.
+> **Status (2026-09-03).** Production headline **accepted mechanically by
+> the reviewer** on rev 2.7 and **reproduced exactly by rev 2.9**
+> (89 / 148 / 192 / 69, resident demand 350; 0 cohort moves person-by-person).
+> Sign-off record in `reference/signoff_2026-09-02.md`. Rev 2.8.3 was
+> rejected: its occupancy-based building guard excluded a residential
+> condominium and mis-parsed numbered streets. Rev 2.9 removes every
+> occupancy-based exclusion from the residency hierarchy; occupancy and
+> building normalisation are audit / QA flags only. Unresolved approved
+> unplaced 9 (was 11); D maximum 78.
 >
 > Earlier status, rev 2.7 run — all seven gates closed: Definitions:
 > *new Type A/B demand arising FY2022–FY2026*; residency = registry latest
