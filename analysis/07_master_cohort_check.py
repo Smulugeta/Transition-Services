@@ -404,12 +404,26 @@ def epic(rows):
     print(f"   check 7 — Epic rows not used because facility / PO Box / placeholder: {dict(guards)}   guard basis: {basis}")
     import re as _re
     def bkey(x):
-        u = _re.sub(r"[#,.]", " ", (x or "").upper())
-        u = _re.sub(r"\b(UNIT|APT|APARTMENT|SUITE|STE|RM|ROOM|BSMT|BASEMENT|LOWER|UPPER|MAIN)\b\s*[A-Z0-9-]*", " ", u)
-        u = _re.sub(r"^\s*[A-Z]?\d+[A-Z]?\s*-\s*(?=\d)", "", u); u = _re.sub(r"^\s*\d+[A-Z]?\s+(?=\d+\s+[A-Z])", "", u)
-        for a_, b_ in (("AVENUE","AVE"),("STREET","ST"),("DRIVE","DR"),("ROAD","RD"),("CRESCENT","CRES"),("BOULEVARD","BLVD")):
-            u = _re.sub(rf"\b{a_}\b", b_, u)
-        return _re.sub(r"\s+", " ", u).strip()
+        # mirrors the POSIX-ERE chain in sql/09 rev 2.8.3 exactly (no \b, no lookahead)
+        u = (x or "").upper()
+        for pat, rep in (
+            (r"[#,.]", " "),
+            (r"(^|[^A-Z])(UNIT|APT|APARTMENT|SUITE|STE|RM|ROOM)\s*[A-Z]?[0-9]+[A-Z]?", r"\1 "),
+            (r"(^|[^A-Z])(BSMT|BASEMENT)([^A-Z]|$)", r"\1 \3"),
+            (r"(^|[^A-Z])(LOWER|UPPER|MAIN)\s+(FLOOR|FLR|LEVEL)([^A-Z]|$)", r"\1 \4"),
+            (r"^\s*[A-Z]?[0-9]+[A-Z]?\s*-\s*([0-9])", r"\1"),
+            (r"^\s*[0-9]+[A-Z]?\s+([0-9]+\s+[A-Z])", r"\1"),
+            (r"^\s*-\s*", ""),
+            (r"\s+", " "),
+            (r"(^|[^A-Z])AVENUE($|[^A-Z])", r"\1AVE\2"),
+            (r"(^|[^A-Z])STREET($|[^A-Z])", r"\1ST\2"),
+            (r"(^|[^A-Z])DRIVE($|[^A-Z])", r"\1DR\2"),
+            (r"(^|[^A-Z])ROAD($|[^A-Z])", r"\1RD\2"),
+            (r"(^|[^A-Z])CRESCENT($|[^A-Z])", r"\1CRES\2"),
+            (r"(^|[^A-Z])BOULEVARD($|[^A-Z])", r"\1BLVD\2"),
+        ):
+            u = _re.sub(pat, rep, u)
+        return u.strip()
     bocc = defaultdict(set)
     for r in rows:
         if col(r,"EPIC_ADDRESS_AT_DEMAND"): bocc[(bkey(col(r,"EPIC_ADDRESS_AT_DEMAND")), col(r,"EPIC_ZIP_AT_DEMAND"))].add(r["_phn"])

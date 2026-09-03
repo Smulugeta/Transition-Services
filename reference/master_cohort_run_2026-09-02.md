@@ -342,3 +342,23 @@ analysis needs. Keep it as sensitivity; report the 352 alongside 350.
   applies the rev 2.4 rules to the rev 2.3 extract, which is where the figures
   above come from. 35 people are left-truncated in the full universe, none in
   any cohort.
+
+## Rev 2.8.1 – 2.8.3 — Snowflake compatibility fixes (no logic change; not yet run)
+
+Rev 2.8 never executed. Three successive compile errors, each fixed in the query
+and verified mechanically before resending:
+
+| Rev | Snowflake error | Cause | Fix |
+|---|---|---|---|
+| 2.8.1 | Unsupported subquery type cannot be evaluated | correlated scalar COUNT subqueries with a date-range predicate; LATERAL in `geo` | pre-aggregated `*_conc_*` CTEs joined on a `hash()` row key; plain subquery in `geo` |
+| 2.8.2 | Object STRATA_PLACEHOLDER does not exist | CTE declared after the CTE that joins to it | moved ahead of `strata_addr_k`; all 58 CTEs scanned, no forward reference |
+| 2.8.3 | Invalid regular expression … no argument for repetition operator | `(?=…)` lookahead and `\b` are not POSIX ERE | building-key chain rewritten with explicit `(^\|[^A-Z])` edges and replacement backreferences; every regex literal in the file compiled and checked for Perl-only tokens |
+
+One behavioural correction rode along in 2.8.3: a unit designator is stripped only
+when followed by a unit number, so "123 MAIN STREET" keeps its street; rev 2.8's
+pattern would have reduced it to the civic number. The checker's `bkey()` mirror was
+rewritten to the identical chain; on the rev 2.7 export the within-cohort building
+count moves from 99 to 100 of 360 Epic Town verdicts in a 3+ occupant building.
+
+Expected on the 2.8.3 run: production unchanged at 89 / 148 / 192 / 69; Epic
+sensitivity close to 89 / 149 / 193 / 69 (lower bound from within-cohort keys).

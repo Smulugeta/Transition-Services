@@ -1,6 +1,6 @@
 -- ============================================================================
 -- MASTER DEMAND COHORT — A / B / C / D — STANDALONE, ONE ROW PER PERSON
--- Revision 2.8.2: as 2.8, with every correlated scalar subquery rewritten as a pre-aggregated join and CTEs ordered for Snowflake. Paste-and-run.
+-- Revision 2.8.3: as 2.8, made Snowflake-clean (pre-aggregated joins, CTE order, POSIX-only regex). Paste-and-run.
 -- Feed the CSV to analysis/07_master_cohort_check.py.
 --
 -- WHAT CHANGED AND WHY (each item is a review finding)
@@ -88,7 +88,13 @@
 --     uncertainty around D; the maximum is primary D plus every valid
 --     unresolved approved-unplaced person.
 --
--- REV 2.8.1 / 2.8.2 — SNOWFLAKE COMPATIBILITY ONLY (no logic change)
+-- REV 2.8.1 / 2.8.2 / 2.8.3 — SNOWFLAKE COMPATIBILITY ONLY (no logic change)
+--   2.8.3: building-key regexes rewritten in POSIX ERE. Snowflake has no
+--   lookahead (?=) and \b is not guaranteed; word edges are now explicit
+--   (^|[^A-Z]) ... ($|[^A-Z]) with backreferences in the replacement. Same
+--   intent as 2.8 with one correction: a unit designator is stripped only
+--   when followed by a unit number, so "123 MAIN STREET" keeps its street
+--   (2.8 would have reduced it to the civic number).
 --   2.8.2: strata_placeholder moved ahead of strata_addr_k; Snowflake
 --   requires a CTE to be defined before the first CTE that references it.
 --   Rev 2.8 failed with "Unsupported subquery type cannot be evaluated":
@@ -518,23 +524,26 @@ strata_placeholder (pat) as (
 ),
 strata_addr_k as (
     select a.*,
-           regexp_replace(
-             regexp_replace(
-               regexp_replace(
-                 regexp_replace(
-                   regexp_replace(upper(a.street_address), '[#,.]', ' '),
-                   '\\b(UNIT|APT|APARTMENT|SUITE|STE|RM|ROOM|BSMT|BASEMENT|LOWER|UPPER|MAIN)\\b\\s*[A-Z0-9-]*', ' '),
-                 '^\\s*[A-Z]?[0-9]+[A-Z]?\\s*-\\s*(?=[0-9])', ''),
-               '^\\s*[0-9]+[A-Z]?\\s+(?=[0-9]+\\s+[A-Z])', ''),
-             '\\s+', ' ')                                                  as bldg_key_raw
+           trim(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(upper(a.street_address),
+             '[#,.]', ' '),
+             '(^|[^A-Z])(UNIT|APT|APARTMENT|SUITE|STE|RM|ROOM)\\s*[A-Z]?[0-9]+[A-Z]?', '\\1 '),
+             '(^|[^A-Z])(BSMT|BASEMENT)([^A-Z]|$)', '\\1 \\3'),
+             '(^|[^A-Z])(LOWER|UPPER|MAIN)\\s+(FLOOR|FLR|LEVEL)([^A-Z]|$)', '\\1 \\4'),
+             '^\\s*[A-Z]?[0-9]+[A-Z]?\\s*-\\s*([0-9])', '\\1'),
+             '^\\s*[0-9]+[A-Z]?\\s+([0-9]+\\s+[A-Z])', '\\1'),
+             '^\\s*-\\s*', ''),
+             '\\s+', ' '),
+             '(^|[^A-Z])AVENUE($|[^A-Z])', '\\1AVE\\2'),
+             '(^|[^A-Z])STREET($|[^A-Z])', '\\1ST\\2'),
+             '(^|[^A-Z])DRIVE($|[^A-Z])', '\\1DR\\2'),
+             '(^|[^A-Z])ROAD($|[^A-Z])', '\\1RD\\2'),
+             '(^|[^A-Z])CRESCENT($|[^A-Z])', '\\1CRES\\2'),
+             '(^|[^A-Z])BOULEVARD($|[^A-Z])', '\\1BLVD\\2')) as bldg_key
     from strata_addr a
 ),
 strata_addr_b as (
     select k.*,
-           trim(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(k.bldg_key_raw,
-             '\\bAVENUE\\b','AVE'),'\\bSTREET\\b','ST'),'\\bDRIVE\\b','DR'),'\\bROAD\\b','RD'),
-             '\\bCRESCENT\\b','CRES'),'\\bBOULEVARD\\b','BLVD'))                   as bldg_key,
-           regexp_substr(trim(k.bldg_key_raw), '^[0-9]+')                    as civic,
+           regexp_substr(k.bldg_key, '^[0-9]+')                              as civic,
            iff(sp.pat is not null, 1, 0)                                      as is_placeholder
     from strata_addr_k k
     left join strata_placeholder sp on upper(k.street_address) like sp.pat
@@ -733,18 +742,21 @@ epic_addr as (
 ),
 epic_addr_b as (
     select a.*,
-           trim(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(
-             regexp_replace(
-               regexp_replace(
-                 regexp_replace(
-                   regexp_replace(
-                     regexp_replace(upper(a.line1), '[#,.]', ' '),
-                     '\\b(UNIT|APT|APARTMENT|SUITE|STE|RM|ROOM|BSMT|BASEMENT|LOWER|UPPER|MAIN)\\b\\s*[A-Z0-9-]*', ' '),
-                   '^\\s*[A-Z]?[0-9]+[A-Z]?\\s*-\\s*(?=[0-9])', ''),
-                 '^\\s*[0-9]+[A-Z]?\\s+(?=[0-9]+\\s+[A-Z])', ''),
-               '\\s+', ' '),
-             '\\bAVENUE\\b','AVE'),'\\bSTREET\\b','ST'),'\\bDRIVE\\b','DR'),'\\bROAD\\b','RD'),
-             '\\bCRESCENT\\b','CRES'),'\\bBOULEVARD\\b','BLVD'))                   as bldg_key
+           trim(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(upper(a.line1),
+             '[#,.]', ' '),
+             '(^|[^A-Z])(UNIT|APT|APARTMENT|SUITE|STE|RM|ROOM)\\s*[A-Z]?[0-9]+[A-Z]?', '\\1 '),
+             '(^|[^A-Z])(BSMT|BASEMENT)([^A-Z]|$)', '\\1 \\3'),
+             '(^|[^A-Z])(LOWER|UPPER|MAIN)\\s+(FLOOR|FLR|LEVEL)([^A-Z]|$)', '\\1 \\4'),
+             '^\\s*[A-Z]?[0-9]+[A-Z]?\\s*-\\s*([0-9])', '\\1'),
+             '^\\s*[0-9]+[A-Z]?\\s+([0-9]+\\s+[A-Z])', '\\1'),
+             '^\\s*-\\s*', ''),
+             '\\s+', ' '),
+             '(^|[^A-Z])AVENUE($|[^A-Z])', '\\1AVE\\2'),
+             '(^|[^A-Z])STREET($|[^A-Z])', '\\1ST\\2'),
+             '(^|[^A-Z])DRIVE($|[^A-Z])', '\\1DR\\2'),
+             '(^|[^A-Z])ROAD($|[^A-Z])', '\\1RD\\2'),
+             '(^|[^A-Z])CRESCENT($|[^A-Z])', '\\1CRES\\2'),
+             '(^|[^A-Z])BOULEVARD($|[^A-Z])', '\\1BLVD\\2')) as bldg_key
     from epic_addr a
 ),
 epic_addr_c as (select b.*, regexp_substr(b.bldg_key, '^[0-9]+') as civic from epic_addr_b b),
