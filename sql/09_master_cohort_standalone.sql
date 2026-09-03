@@ -1,6 +1,6 @@
 -- ============================================================================
 -- MASTER DEMAND COHORT — A / B / C / D — STANDALONE, ONE ROW PER PERSON
--- Revision 2.8.1: as 2.8, with every correlated scalar subquery rewritten as a pre-aggregated join. Paste-and-run.
+-- Revision 2.8.2: as 2.8, with every correlated scalar subquery rewritten as a pre-aggregated join and CTEs ordered for Snowflake. Paste-and-run.
 -- Feed the CSV to analysis/07_master_cohort_check.py.
 --
 -- WHAT CHANGED AND WHY (each item is a review finding)
@@ -88,7 +88,9 @@
 --     uncertainty around D; the maximum is primary D plus every valid
 --     unresolved approved-unplaced person.
 --
--- REV 2.8.1 — SNOWFLAKE COMPATIBILITY ONLY (no logic change)
+-- REV 2.8.1 / 2.8.2 — SNOWFLAKE COMPATIBILITY ONLY (no logic change)
+--   2.8.2: strata_placeholder moved ahead of strata_addr_k; Snowflake
+--   requires a CTE to be defined before the first CTE that references it.
 --   Rev 2.8 failed with "Unsupported subquery type cannot be evaluated":
 --   Snowflake will not run a correlated scalar subquery whose predicate is a
 --   date range, and the LATERAL in geo was the same pattern. Every such
@@ -510,6 +512,10 @@ strata_addr as (
 -- REV 2.8: building key. Strip unit designators and abbreviate street types,
 -- so every unit of one building shares a key. civic = leading civic number
 -- after stripping, for the spelling-variant check.
+-- placeholder-address patterns; defined here because strata_addr_b and epic_addr both join to it
+strata_placeholder (pat) as (
+    select * from values ('%NO FIXED%'),('%NFA%'),('%EVACUEE%'),('%UNKNOWN%'),('%HOMELESS%'),('%SHELTER%'),('%TRANSIENT%')
+),
 strata_addr_k as (
     select a.*,
            regexp_replace(
@@ -541,9 +547,6 @@ strata_shared as (
     from strata_addr group by 1,2
 ),
 -- G4: placeholder strings are never an address
-strata_placeholder (pat) as (
-    select * from values ('%NO FIXED%'),('%NFA%'),('%EVACUEE%'),('%UNKNOWN%'),('%HOMELESS%'),('%SHELTER%'),('%TRANSIENT%')
-),
 -- all versions ACTIVE on the demand date (rules 3, 8), one row per version
 -- REV 2.8.1: correlated scalar subqueries are not supported by Snowflake in
 -- this shape ("Unsupported subquery type"). Concurrency is computed as
