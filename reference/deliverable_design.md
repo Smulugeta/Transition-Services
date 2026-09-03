@@ -67,7 +67,7 @@ spells in all. The fix is conceptual and touches no cohort.
 | 8 | Origin at entry kept; sub-acute folded into Acute Care | done (detail retained) |
 | 9 | Placement-site completeness on the placed denominator | done |
 | 10 | 39 vs 40 outside-universe Cochrane events | distinct labels: 39 people have no attribute record at all; the 40th is the April-2020 carry-in person present in the QA table |
-| 11 | `Z1Z1Z1` must not establish residency | **sql/09 rev 2.10 + sql/14 + sql/18**: the non-Alberta branch now requires a syntactically valid, non-dummy Canadian postal code. Universe impact: 46 invalid Strata codes, 2 decided residency (both non-Town, neither in a cohort) → A/B/C/D unchanged by construction. The builder fails until sql/14 is re-run |
+| 11 | `Z1Z1Z1` must not establish residency | **done, sql/09 rev 2.10 + sql/14 + sql/18**: the non-Alberta branch requires a syntactically valid, non-dummy Canadian postal code. sql/14 re-run 2026-09-03 17:04: the Z1Z1Z1 person is now UNRESOLVED (X2 → X3); A/B/C/D 89/148/192/69 unchanged; the QA population gains one row (a second invalid-code person whose residency became unresolved and is therefore Cochrane-facing). All 35 gates pass |
 
 ### Populations on the current extracts (before sql/18)
 
