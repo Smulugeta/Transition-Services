@@ -33,23 +33,14 @@ pat_key as (
 select k.phn,
        a.patient_id,
        a.admission_notice_id,
-       a.patient_transfer_id,
        a.admission_date::date                         as admission_dt,
        iff(month(a.admission_date) >= 4, year(a.admission_date) + 1, year(a.admission_date)) as admission_fye,
        trim(a.admission_location)                     as placement_site,
-       trim(a.care_type)                              as care_type,
        r.care_stream,
        iff(s.site_name is not null, 1, 0)             as placement_in_cochrane,
        trim(a.source_location)                        as source_location,
-       a.assessed_approved_date::date                 as assessed_approved_dt,
-       a.enabled_for_transfer_date::date              as enabled_for_transfer_dt,
-       a.accepted_date::date                          as accepted_dt,
        a.discharge_date::date                         as discharge_dt,
        trim(a.discharge_destination)                  as discharge_destination,
-       trim(a.discharge_reason)                       as discharge_reason,
-       a.priority_code,
-       a.service_provider_rating,
-       count(*) over (partition by k.phn)             as n_events_for_person,
        row_number() over (partition by k.phn order by a.admission_date, a.admission_notice_id) as event_seq_for_person
 from db_source_strata_health_pathways.raw.admissions a
 join pat_key k        on k.patient_id = a.patient_id
