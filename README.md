@@ -18,12 +18,15 @@ scripts. Every published figure traces to a numbered block in
 > unplaced 9 (was 11); D maximum 78.
 >
 > **Deliverable phase** (2026-09-03): person (`sql/14`), placement-event
-> (`sql/15`) and waitlist-spell (`sql/16`) extracts run; `analysis/08` builds
-> the internal and consultant files with 30 QA gates, reproduces 89/148/192/69,
-> and reconciles events and spells back to the person grain. Consultant scope
-> 987. Findings, decisions and the reviewer's ten corrections are in
-> `reference/deliverable_design.md`. Nothing is external until the reviewer
-> clears `REVIEWER_PRECHECK.md`.
+> (`sql/15`), waitlist-spell (`sql/16`), Epic DOB review (`sql/17`) and
+> activity-person (`sql/18`) extracts; `analysis/08` builds the internal and
+> consultant files with 35 QA gates and reproduces 89/148/192/69. Two
+> populations: INCIDENT_DEMAND_SCOPE 987 (holds A/B/C/D) and
+> CONSULTANT_ACTIVITY_SCOPE built from activity records with no demand gate
+> (1,130 before `sql/18` supplies attributes at the activity anchor). sql/09
+> rev 2.10: an invalid postal code cannot establish residency. Findings and
+> the reviewers' corrections are in `reference/deliverable_design.md`.
+> Nothing is external until the reviewer clears `REVIEWER_PRECHECK.md`.
 >
 > Earlier status, rev 2.7 run — all seven gates closed: Definitions:
 > *new Type A/B demand arising FY2022–FY2026*; residency = registry latest
