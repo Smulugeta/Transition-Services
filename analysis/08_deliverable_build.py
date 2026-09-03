@@ -317,6 +317,15 @@ def qa(P, U, expect, have, E, W, A):
         chk("Cochrane-rated waitlist person missing from the consultant file", sum(1 for phn in {w["PHN"] for w in W if w["RATED_COCHRANE_IN_SPELL"] == "1"} if phn not in U or U[phn]["IN_CONSULTANT_DELIVERABLE"] != "1"))
     if A is not None: chk("activity-scope person without attributes (sql/18 gap)", sum(1 for u in D if u["ATTRIBUTES_AVAILABLE"] != "1"))
     got = (c["A"], c["B"], c["C"], c["D"]); chk(f"A/B/C/D differs from accepted {expect} (got {got})", 0 if got == tuple(expect) else 1)
+    # resident demand = A + C + D, by fiscal year and in total; annual sum = accepted total
+    by_y = {}
+    for y in FYES:
+        ys = [p for p in coh if p["DEMAND_FYE"] == y]; cy = Counter(p["COHORT"] for p in ys)
+        by_y[y] = (sum(1 for p in ys if p["COHORT"] in ("A", "C", "D")), cy["A"] + cy["C"] + cy["D"])
+    chk("resident demand != A + C + D in some fiscal year", sum(1 for y in FYES if by_y[y][0] != by_y[y][1]))
+    chk("resident demand != A + C + D in total", 0 if sum(1 for p in coh if p["COHORT"] in ("A", "C", "D")) == c["A"] + c["C"] + c["D"] else 1)
+    chk(f"sum of annual resident demand != accepted A+C+D ({expect[0]+expect[2]+expect[3]}); got {sum(v[0] for v in by_y.values())}", 0 if sum(v[0] for v in by_y.values()) == expect[0] + expect[2] + expect[3] else 1)
+    chk("cohort member with DEMAND_FYE outside FY2022-FY2026", sum(1 for p in coh if p["DEMAND_FYE"] not in FYES))
     return out, fail == 0
 
 # ── summaries ─────────────────────────────────────────────────────────────────
@@ -347,8 +356,13 @@ def summaries(P, U, E, W):
         ["activity only", sum(1 for u in D if u["INCIDENT_DEMAND_SCOPE"] != "1"), "demand before FY2022, or already in residential care at the demand event"]]))
     S.append("ACTIVITY_STATUS of the consultant person file: " + "; ".join(f"{k} {v}" for k, v in Counter(u["ACTIVITY_STATUS"].split(":")[0] for u in D).most_common()) + "\n")
     S.append("## 1. Demand-year view — INCIDENT_DEMAND_SCOPE by DEMAND_FYE (person grain). A/B/C/D live here.\n")
-    S.append(md(["FYE", "incident-scope people", "A+B+C+D", "A", "C", "D", "A+C+D resident demand", "D1", "D2", "D3", "B"],
-        by_fye(inc, "DEMAND_FYE", lambda ys: [len(ys), sum(1 for p in ys if p["COHORT"])] + [Counter(p["COHORT"] for p in ys)[k] for k in "ACD"] + [sum(1 for p in ys if p["COHORT"] in "ACD")] + [Counter(p["D_CLASS"][:2] for p in ys if p["COHORT"] == "D")[k] for k in ("D1", "D2", "D3")] + [Counter(p["COHORT"] for p in ys)["B"]])))
+    def demand_row(ys):
+        cy = Counter(p["COHORT"] for p in ys); resident = cy["A"] + cy["C"] + cy["D"]
+        assert resident == sum(1 for p in ys if p["COHORT"] in ("A", "C", "D")), "resident demand must equal A + C + D"
+        return [len(ys), sum(1 for p in ys if p["COHORT"]), cy["A"], cy["C"], cy["D"], resident] + [Counter(p["D_CLASS"][:2] for p in ys if p["COHORT"] == "D")[k] for k in ("D1", "D2", "D3")] + [cy["B"]]
+    rows1 = by_fye(inc, "DEMAND_FYE", demand_row)
+    assert sum(r[5] for r in rows1[:-1]) == rows1[-1][5], "annual resident demand must sum to the total"
+    S.append(md(["FYE", "incident-scope people", "A+B+C+D", "A", "C", "D", "A+C+D resident demand", "D1", "D2", "D3", "B"], rows1))
     S.append("D = no Type A/B placement observed in the Calgary/Edmonton Strata placement source by 31 March 2026; D1 rises to the right by censoring.\n")
     S += dist_tables(inc, "DEMAND_FYE", "1. Incident scope")
     S.append("## 2. Waitlist-year view — CONSULTANT_ACTIVITY_SCOPE by LIST_ENTRY_FYE (spell grain, no demand gate)\n")

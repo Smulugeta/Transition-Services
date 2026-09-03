@@ -69,6 +69,18 @@ spells in all. The fix is conceptual and touches no cohort.
 | 10 | 39 vs 40 outside-universe Cochrane events | resolved with distinct labels. The earlier "40" folded in the X4 person (in incident scope, unlabelled at the time). Final: 344 Cochrane-site admissions = 237 first placements of A/B + 29 incident-scope X1–X4 + 24 later moves of C people + 15 later moves of A/B people + 39 people outside incident demand (21 in prior residential care before FY2022, 18 with earlier or non-new demand). Neither April-2020 carry-in person has a Cochrane-site admission |
 | 11 | `Z1Z1Z1` must not establish residency | **done, sql/09 rev 2.10 + sql/14 + sql/18**: the non-Alberta branch requires a syntactically valid, non-dummy Canadian postal code. sql/14 re-run 2026-09-03 17:04: the Z1Z1Z1 person is now UNRESOLVED (X2 → X3); A/B/C/D 89/148/192/69 unchanged; the QA population gains one row (a second invalid-code person whose residency became unresolved and is therefore Cochrane-facing). All 35 gates pass |
 
+### Reporting correction and release gates (2026-09-03, ninth review)
+
+The summary's "A+C+D resident demand" column by DEMAND_FYE showed 173 / 179 /
+168 / 183 / 136 (839): a Python membership test treated an empty cohort string
+as a member of "ACD", so unlabelled incident-scope people were counted. No
+population, cohort, activity or enrichment logic was involved. Corrected to
+59 / 84 / 77 / 76 / 54 = 350. Three gates added, each fatal: resident demand =
+A + C + D in every fiscal year; resident demand = A + C + D in total; the sum of
+annual resident demand = the accepted 350. The summary also asserts both at
+render time. Gates now 40, all passing. The reviewer's condition for release
+("once the final summary shows 350") is met.
+
 ### Populations after the sql/18 run (2026-09-03 17:29, final pre-check)
 
 | measure | count |
