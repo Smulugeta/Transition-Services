@@ -7,7 +7,14 @@ Everything here is reproducible from the SQL extracts and the two analysis
 scripts. Every published figure traces to a numbered block in
 `sql/01_demand_capacity_report.sql`.
 
-> **Status (2026-09-02, rev 2.7 run — all seven gates closed).** Definitions:
+> **Status (2026-09-02, sign-off).** Production headline **accepted
+> mechanically by the reviewer**; sign-off record in
+> `reference/signoff_2026-09-02.md`. Rev 2.8 hardening (building-level
+> facility guard, Strata CONFLICT blocks classification on both anchors,
+> registry PHN validated before padding) is written and does not change the
+> headline.
+>
+> Earlier status, rev 2.7 run — all seven gates closed: Definitions:
 > *new Type A/B demand arising FY2022–FY2026*; residency = registry latest
 > pre-demand address, else the Strata address effective at demand; B = any
 > non-Town resident placed in Cochrane. **Headline: A 89 · B 148 · C 192 · D 69
@@ -437,7 +444,8 @@ build/
 reference/
   cochrane_address_lookup.csv     129 Cochrane-tagged addresses, pre-classified
   coverage_check_results.md       outputs of sql/10 with interpretation (run 2026-09-02)
-  master_cohort_run_2026-09-02.md first real run of sql/09: A-D, D1/D2/D3, reconciliation
+  master_cohort_run_2026-09-02.md working run record across revisions 2.1-2.7
+  signoff_2026-09-02.md           FINAL: production 89/148/192/69, D split, sensitivities, the 11 unresolved
 ```
 
 ### Running things
@@ -498,9 +506,11 @@ Not blocking anything published, but each would strengthen the case:
    admissions per 1,000 seniors — benchmarkable against comparable Alberta
    communities and projectable against the town's growth. Single most useful
    number not yet in hand, and it needs no external request.
-2. **Reviewer's final pass** on the rev 2.7 run record. Then the consultant
-   confirms B = non-Town. Still for ALA (a facility reference table is now
-   the most useful of these — it would resolve 3 of the 11 remaining): a Central-zone source; the Retired-DAL/DEL codes; which approval
+2. **Run `sql/09` rev 2.8** to confirm the hardening changes nothing (the
+   local re-evaluation predicts Epic sensitivity 89 / 149 / 193 / 69). Then
+   the consultant confirms B = non-Town. Still for ALA (a facility reference
+   table is now the most useful of these — it would resolve 3 of the 11
+   remaining): a Central-zone source; the Retired-DAL/DEL codes; which approval
    field is operational. Waitlist history before 2021-04-01 would additionally
    resolve the 1,604 left-truncated people and turn the 138 displacement floor
    into a count.

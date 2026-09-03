@@ -194,6 +194,16 @@ select 'vital_stats.stkh_num_1',
 from (select regexp_replace(stkh_num_1::string,'[^0-9]','') as digits, length(regexp_replace(stkh_num_1::string,'[^0-9]','')) as d
       from db_source_ah_vital_stats.curated.tb_vital_stats_deaths_adhoc)
 group by 1,2
+union all
+-- REGISTRY (rev 2.8). Stored numerically, so 1-8 digits is a lost leading
+-- zero and is padded; 0 and >9 digits are rejected before any padding.
+select 'provincial_registry.phn (distinct people)',
+       case when d = 0 then '0 digits' when d between 1 and 8 then '1-8 digits (padded)'
+            when d = 9 then '9 digits' else '>9 digits (rejected)' end,
+       count(*), count_if(digits = '000000000')
+from (select distinct regexp_replace(phn::string,'[^0-9]','') as digits, length(regexp_replace(phn::string,'[^0-9]','')) as d
+      from db_source_ah_provincial_registry.curated.provincial_registry where fye between 2018 and 2026)
+group by 1,2
 order by 1,2;
 
 -- ── F. IS effective_from_date A MOVE-IN DATE OR A RECORD-CREATION DATE? ────

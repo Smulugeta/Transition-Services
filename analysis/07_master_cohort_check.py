@@ -2,6 +2,18 @@
 """
 Validate and tabulate the master demand cohort (output of sql/09, rev 2.3).
 
+Revision 8 (production hardening, sixth review):
+  - Building-level facility guard reported for Strata and Epic
+    (…_BUILDING_CONCURRENT_N); Epic Town verdicts tabulated by building
+    occupancy, with a within-cohort building-key fallback when the extract
+    predates rev 2.8.
+  - STRATA CONFLICT verdicts counted on both anchors; a CONFLICT that
+    reaches residency_final is an integrity failure.
+  - Registry PHNs that were padded are counted.
+  - Wording: "alt-anchor-only people / demand events", never admissions; D is
+    "no Type A/B placement observed in the Calgary/Edmonton Strata placement
+    source by 2026-03-31"; Epic figures are always labelled sensitivity.
+
 Revision 7 (Epic PAT_ADDR_CHNG_HX source validation, sensitivity only):
   Reports sql/12 checks 3-11 and the control case from the epic_* columns of
   sql/09 rev 2.7: active-at-demand distribution (0 / 1 / multiple), class
@@ -191,6 +203,11 @@ def integrity(rows):
                                                sum(1 for r in rows if r["_epic"] and r["_resFin"] not in (r["_resL"], r["_strat"] or "", UNRES))),
         ("SQL COHORT_EPIC_SENS disagrees with recomputed Epic-sensitivity cohort",
                                                sum(1 for r in rows if "COHORT_EPIC_SENS" in rows[0] and (r["_sqlcohE"] or None) != (r["_cohE"] or None))),
+        ("Strata CONFLICT verdict reached residency_final (must block)",
+                                               sum(1 for r in rows if (r["_strat"] or "").startswith("CONFLICT") and r["_src"]=="STRATA_ADDRESS_H")),
+        ("Strata CONFLICT verdict reached residency_final_alt (must block)",
+                                               sum(1 for r in rows if col(r,"STRATA_RESIDENCY_ALT").startswith("CONFLICT")
+                                                   and col(r,"RESIDENCY_LATEST_ALT")==UNRES and (r["_resFinA"] or UNRES)!=UNRES)),
     ]
     bad = 0
     for label, c in checks:
@@ -224,8 +241,8 @@ def cohorts(rows):
     print(f"\n   never approved, excluded from A-D: {sum(1 for r in rows if not r['_app']):,}")
     print(f"   of D, placed AFTER follow-up end (sensitivity only): {sum(1 for r in rows if r['_coh']=='D' and r['_plaf']):,}")
     print(f"   of D, received a Level 3 bed instead: {sum(1 for r in rows if r['_coh']=='D' and col(r,'FIRST_LEVEL3_DT')):,}")
-    print("\n   SOURCE COVERAGE — applies to ALL of D, not only D3: the placement source is the Calgary and")
-    print("   Edmonton Strata instances. D means no Type A/B placement observed IN THAT SOURCE by 2026-03-31.\n")
+    print("\n   D = no Type A/B placement observed in the Calgary/Edmonton Strata placement source by 31 March 2026.")
+    print("   It is NOT provincial unmet demand. The caveat applies to all of D, not only D3.\n")
     return cP
 
 # ── 3. residency uncertainty, no request gate ───────────────────────────────
@@ -305,6 +322,7 @@ def gate1(rows):
     print(f"   people with both anchors {len(both):,}; demand date changes {len(chg):,} ({pct(len(chg),len(both)).strip()}), of which later {later:,}")
     print(f"   crossing a fiscal-year boundary {fy:,};  entering the window {enter:,};  leaving it {leave:,};  residency class changes {resch:,}")
     cP = Counter(r["_coh"] for r in rows if r["_coh"]); cA = Counter(r["_cohAlt"] for r in rows if r["_cohAlt"])
+    print(f"   alt-anchor-only people / demand events in the universe: {sum(1 for r in rows if r['_inwA'] and not r['_inw']):,}")
     print(f"\n   {'cohort':8s} {'current':>9} {'alt':>9} {'diff':>6}")
     for k in ("A","B","C","D"): print(f"   {k:8s} {cP[k]:9,} {cA[k]:9,} {cA[k]-cP[k]:+6,}")
     rp = cP["A"]+cP["C"]+cP["D"]; ra = cA["A"]+cA["C"]+cA["D"]
@@ -325,8 +343,11 @@ def gate2(rows):
     multi = [r for r in used if int(col(r,"STRATA_N_ACTIVE_AT_DEMAND","0") or 0) > 1]
     dis = [r for r in multi if col(r,"STRATA_ACTIVE_CLASSES_DISAGREE","0")=="1"]
     print(f"   more than one active: {len(multi):,};  competing versions DISAGREE on class: {len(dis):,}")
-    coh = Counter(r["_coh"] or "-" for r in dis)
-    print(f"   of the disagreeing, cohort under the tiebreak: {dict(coh)}  <- these are the only assignments the tiebreak could change\n")
+    cf = sum(1 for r in rows if (r["_strat"] or "").startswith("CONFLICT")); cfa = sum(1 for r in rows if col(r,"STRATA_RESIDENCY_ALT").startswith("CONFLICT"))
+    print(f"   CONFLICT verdicts (rev 2.8: block, never tiebreak): primary anchor {cf:,}, alternative anchor {cfa:,}")
+    if "REGISTRY_PHN_WAS_PADDED" in rows[0]:
+        print(f"   registry PHNs padded from 1-8 digits (leading zero lost to numeric storage): {sum(1 for r in rows if col(r,'REGISTRY_PHN_WAS_PADDED','0')=='1'):,}")
+    print()
 
 # ── G3. Surrey proof ────────────────────────────────────────────────────────
 def gate3(rows):
@@ -379,7 +400,29 @@ def epic(rows):
     guards = Counter(("facility" if col(r,"EPIC_IS_FACILITY","0")=="1" else "PO Box" if col(r,"EPIC_IS_POBOX","0")=="1"
                       else "placeholder" if col(r,"EPIC_IS_PLACEHOLDER","0")=="1" else None) for r in inw if r["_epic"])
     guards.pop(None, None)
-    print(f"   check 7 — Epic rows not used because facility / PO Box / placeholder: {dict(guards)}")
+    basis = "BUILDING level (rev 2.8)" if "EPIC_BUILDING_CONCURRENT_N" in rows[0] else "EXACT address string (pre rev 2.8 — misses multi-unit facilities such as 50 Grande Ave)"
+    print(f"   check 7 — Epic rows not used because facility / PO Box / placeholder: {dict(guards)}   guard basis: {basis}")
+    import re as _re
+    def bkey(x):
+        u = _re.sub(r"[#,.]", " ", (x or "").upper())
+        u = _re.sub(r"\b(UNIT|APT|APARTMENT|SUITE|STE|RM|ROOM|BSMT|BASEMENT|LOWER|UPPER|MAIN)\b\s*[A-Z0-9-]*", " ", u)
+        u = _re.sub(r"^\s*[A-Z]?\d+[A-Z]?\s*-\s*(?=\d)", "", u); u = _re.sub(r"^\s*\d+[A-Z]?\s+(?=\d+\s+[A-Z])", "", u)
+        for a_, b_ in (("AVENUE","AVE"),("STREET","ST"),("DRIVE","DR"),("ROAD","RD"),("CRESCENT","CRES"),("BOULEVARD","BLVD")):
+            u = _re.sub(rf"\b{a_}\b", b_, u)
+        return _re.sub(r"\s+", " ", u).strip()
+    bocc = defaultdict(set)
+    for r in rows:
+        if col(r,"EPIC_ADDRESS_AT_DEMAND"): bocc[(bkey(col(r,"EPIC_ADDRESS_AT_DEMAND")), col(r,"EPIC_ZIP_AT_DEMAND"))].add(r["_phn"])
+    et = [r for r in inw if r["_epic"] in (TOWN, AREA)]
+    def bn(r):
+        v = col(r,"EPIC_BUILDING_CONCURRENT_N")
+        return int(v) if v else len(bocc[(bkey(col(r,"EPIC_ADDRESS_AT_DEMAND")), col(r,"EPIC_ZIP_AT_DEMAND"))])
+    dist = Counter(min(bn(r), 5) for r in et)
+    print(f"   Epic Town/catchment verdicts {len(et):,}; occupants of their BUILDING: {dict(sorted(dist.items()))} (5 = 5+)"
+          + ("" if "EPIC_BUILDING_CONCURRENT_N" in rows[0] else "  [within-cohort lower bound]"))
+    big = Counter((bkey(col(r,"EPIC_ADDRESS_AT_DEMAND")), col(r,"EPIC_ZIP_AT_DEMAND")) for r in et if bn(r) >= 3)
+    for k, v in big.most_common(6): print(f"     {v:3d} in {k[0][:32]:32s} {k[1]}")
+    print(f"   Epic Town verdicts in a building with 3+ occupants: {sum(big.values()):,} of {len(et):,} — facility contamination")
     # check 8: agreement with Registry where Registry is known
     known = [r for r in inw if r["_resL"] != UNRES and r["_epic"] in (TOWN, AREA, NOT)]
     t = lambda x: "Town" if x == TOWN else "non-Town"
@@ -396,7 +439,8 @@ def epic(rows):
     for k in (TOWN, AREA, NOT, "still unresolved"): print(f"     {k:36s} {er[k]:4,}")
     # check 11: sensitivity cohort
     cP = Counter(r["_coh"] for r in rows if r["_coh"]); cE = Counter(r["_cohE"] for r in rows if r["_cohE"])
-    print(f"   check 11 — SENSITIVITY cohort (registry -> Strata -> Epic), NOT the headline:")
+    print(f"   check 11 — SENSITIVITY cohort (registry -> Strata -> Epic), NOT the headline. An exact-address guard can")
+    print(f"              miss multi-unit facilities such as 50 Grande Ave; the building-level guard (rev 2.8) corrects that.")
     print(f"     {'cohort':8s} {'production':>11} {'with Epic':>10} {'diff':>6}")
     for k in ("A","B","C","D"): print(f"     {k:8s} {cP[k]:11,} {cE[k]:10,} {cE[k]-cP[k]:+6,}")
     # control
