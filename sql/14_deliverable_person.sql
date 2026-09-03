@@ -1282,11 +1282,37 @@ classified as (
     left join first_site_alt fa on fa.phn = m.phn
 )
 
--- OUTPUT. Rev 2.3: NO FILTER. The full audit universe is returned. Everyone
--- confirmed non-resident under BOTH residency rules AND the fallback AND not
--- placed in Cochrane bears on nothing, so cochrane_facing = 0 for them; use
--- that flag for presentation, never as a WHERE clause on the QA extract.
-select *
+-- OUTPUT — MINIMUM DATASET. The full audit universe (33,046 rows, 120+
+-- columns) was validated on the rev 2.9 export and is too large to move; this
+-- extract carries only the people who bear on Cochrane and only the columns
+-- the deliverable uses. Every cohort member has cochrane_facing = 1, so the
+-- 89/148/192/69 gate in analysis/08 still applies in full. rated_cochrane = 1
+-- is added so the "seeking a Cochrane placement" group is present.
+-- No Epic, building-key, fallback-registry or alternative-anchor audit
+-- columns: they live in the rev 2.9 export and the sign-off record.
+select
+    -- identification (internal QA only; stripped from the consultant file)
+    phn, patient_id, patient_id_all, n_patient_ids, phn_patient_id_multiplicity, phn_is_autogen_any,
+    -- cohort / pathway
+    cohort, d_class, in_window, was_approved, record_valid, record_invalid_reason,
+    demand_dt, demand_fye, demand_event_type, demand_dt_alt,
+    first_list_appearance, first_approval_dt, setting_at_list_entry, last_seen_on_list, on_list_at_followup,
+    rated_cochrane, cochrane_placement_residency_unresolved, b_catchment, cochrane_facing,
+    -- demographics
+    dob, sex, demographic_source, dob_strata, dob_registry, dob_sources_agree, sex_conflict_registry,
+    -- residence (from the deciding address only)
+    residency_final, residency_source, residency_evidence,
+    residence_postal_code_at_demand, residence_community_at_demand, residence_local_name_at_demand,
+    strata_address_is_placeholder, strata_residency,
+    -- origin setting nearest the demand event
+    origin_setting_raw, origin_source, origin_census_date,
+    -- requested / preferred facility
+    requested_site, requested_care_stream, n_sites_requested, requested_cochrane_flag, requested_cochrane_sites,
+    -- placement
+    first_placement_dt, first_placement_site, first_placement_stream, first_placement_in_cochrane,
+    first_placement_after_followup, first_placement_dt_alt, days_to_placement, placed,
+    first_level3_dt, death_dt
 from classified
+where cochrane_facing = 1 or rated_cochrane = 1
 order by cohort nulls last, demand_dt
 ;
