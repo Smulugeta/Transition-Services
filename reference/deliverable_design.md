@@ -46,6 +46,39 @@ the final deliverable and records every decision that is still open.
 | PHN ↔ PATIENT_ID | 1:1 for all 1,137 people with a Strata patient record; 2 unresolved-residency D3 people have no patient record at all (waitlist PHN only). No split records, so no canonical-ID choice was needed. 59 cohort PHNs carry `IDENTIFIER1_IS_AUTOGEN = 1`, yet all 59 have registry rows and DOBs, so the flag does not mean a fabricated PHN here. |
 | Placeholder addresses | 17 flagged in the extract (including the new dummy patterns); none resolves residency. |
 
+## Seventh-review corrections (2026-09-03) — status
+
+| # | Reviewer requirement | Status |
+|---|---|---|
+| 1 | Ages at event dates (birthday test), age bands, STUDY_ID crosswalk, no PHN/PATIENT_ID external | done in the builder (`age_at`); `AGE_AT_DEMAND / _FIRST_WAITLIST / _PLACEMENT`, `AGE_GROUP_AT_DEMAND`; DOB internal only |
+| 2 | Origin = setting at FIRST list entry; audit ties; `N_ORIGIN_LOCATIONS_AT_ENTRY`, `ORIGIN_LOCATION_LIST`, conflict flag; categories Acute Care / Community / Assisted Living or Other CC / Lodge / Out of Province / Other / Unknown | sql/14 `origin_entry` CTE (needs re-run); builder normalises, and for ties classifies only when every tied value maps to one category; nearest-demand value kept as QA |
+| 3 | `DOB_CONFLICT_FLAG`, `DOB_DIFFERENCE_DAYS`, Epic review, split `DOB_SOURCE` / `SEX_SOURCE`, "sex" not "gender" | done; sql/17 supplies Epic DOB/sex for the review (`--epic-demo`) |
+| 4 | Community for out-of-province Strata addresses from Strata city (labelled); `RESIDENCE_REFERENCE_FYE / DATE` | sql/14 carries `strata_city_at_demand`, `residence_reference_fye`, `strata_address_effective_from` (needs re-run); builder labels the fallback and the reference type |
+| 5 | `IN_CONSULTANT_SCOPE` from the literal request; reconcile to ~988 | done: **987** on the current extract (see below) |
+| 6 | `MOST_FREQUENTLY_OBSERVED_RATED_SITE`; no "preferred" site | renamed in sql/14 and builder; `REQUESTED_COCHRANE_FLAG` and `REQUESTED_COCHRANE_SITES` kept |
+| 7 | Waitlist-activity and placement-event tables from the underlying records | sql/16 (spells, tie-audited entry location) written, needs run; sql/15 events already run (39,993 admissions) |
+| 8 | Summary only after those tables pass QA; demand-year / list-entry-year / placement-year kept apart | builder sections 1-3; final after sql/16 run |
+| 9 | `DAYS_TO_PLACEMENT_ALT` | done: median 28 under both; 5 of 429 placed people change |
+| 10 | Return the QA results before the external file | `REVIEWER_PRECHECK.md` items 1-13 |
+
+### Consultant-scope reconciliation (987)
+
+`IN_CONSULTANT_SCOPE` = valid in-window Type A/B demand AND (Town of Cochrane
+residence OR any Cochrane/Hawthorne rated site OR any Type A/B admission to a
+Cochrane facility, first or later). On the current extract: 987.
+
+- 986 carry a POPULATION label (A-D 498, X1 2, X2 480, X3 6). The 987th is a
+  Cochrane-catchment resident first placed at Bow Crest LTC who later moved
+  into a Cochrane facility and never rated one; labelled X4.
+- Two people meet a criterion but fail the validity gate: both have demand
+  events in April 2020 (approved before the window; left-truncated). One is a
+  Town resident who rated a Cochrane site and is Cochrane-facing; including
+  them would breach the FY2022-FY2026 new-demand definition. The reviewer's
+  "approximately 988" most plausibly includes that person.
+- 152 QA-population rows are out of scope: 74 catchment residents who neither
+  rated nor used a Cochrane site, 49 unresolved-residency people likewise, 27
+  non-Town likewise, and the 2 gate-excluded.
+
 ## Findings from the sql/15 run (event grain, 2026-09-03)
 
 - 344 admissions to the three Cochrane Type A/B sites in FY2022–FY2026 for 329

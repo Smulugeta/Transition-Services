@@ -970,7 +970,23 @@ reg_demo as (
     where phn is not null and phn <> '000000000'
     group by phn
 ),
--- SQL14 origin_at_demand: the waitlist location nearest the demand event
+-- SQL14 origin_entry: the setting on the FIRST census date the person appears
+-- (where they entered the pathway from). Ties on that date are AUDITED, never
+-- broken by min_by/max_by: n_origin_locations_at_entry, origin_location_list,
+-- origin_conflict_flag. origin_setting_raw is the single value only when there
+-- is exactly one; the builder normalises each listed value and reports agreement.
+origin_entry as (
+    select l.phn,
+           min(l.census_date)                                        as entry_census_date,
+           count(distinct l.current_location)                        as n_origin_locations_at_entry,
+           listagg(distinct l.current_location, ' | ') within group (order by l.current_location) as origin_location_list,
+           iff(count(distinct l.current_location) > 1, 1, 0)         as origin_conflict_flag,
+           iff(count(distinct l.current_location) = 1, min(l.current_location), null) as origin_location_at_entry
+    from wl l
+    join (select phn, min(census_date) as first_dt from wl group by phn) f on f.phn = l.phn and f.first_dt = l.census_date
+    group by l.phn
+),
+-- SQL14 origin_at_demand: the waitlist location nearest the demand event (QA only)
 origin_at_demand as (
     select d.phn,
            coalesce(max_by(l.current_location, iff(l.census_date <= d.demand_dt, l.census_date, null)),
@@ -993,7 +1009,7 @@ wl_req as (
 ),
 requested as (
     select phn,
-           mode(rated_site)                                  as requested_site,        -- most-often-listed rated site
+           mode(rated_site)                                  as most_frequently_observed_rated_site,   -- daily snapshots: long-lasting ratings recur; NOT a preference
            count(distinct rated_site)                        as n_sites_requested,
            mode(care_stream)                                 as requested_care_stream,
            max(rated_cochrane)                               as requested_cochrane_flag,
@@ -1029,14 +1045,19 @@ master as (
                iff(pi.dob_strata = rg.dob_registry, 1, 0), null)               as dob_sources_agree,
            iff(rg.n_sex_registry > 1, null, rg.sex_registry)                    as sex,
            iff(rg.n_sex_registry > 1, 1, 0)                                     as sex_conflict_registry,
-           -- SQL14 origin setting nearest the demand event
-           iff(d.demand_event_type = 'approval', od.origin_location, fa_src.source_location) as origin_setting_raw,
+           -- SQL14 origin setting at FIRST list entry (admission-only events: the admission's source_location)
+           iff(d.demand_event_type = 'approval', oe.origin_location_at_entry, fa_src.source_location) as origin_setting_raw,
            iff(d.demand_event_type = 'approval',
-               'waitlist current_location, census ' || od.origin_census_date::string,
+               'waitlist current_location at first list entry ' || oe.entry_census_date::string,
                'admission source_location (admission-only demand event)')       as origin_source,
+           oe.entry_census_date                                                 as origin_entry_census_date,
+           iff(d.demand_event_type = 'approval', oe.n_origin_locations_at_entry, 1) as n_origin_locations_at_entry,
+           iff(d.demand_event_type = 'approval', oe.origin_location_list, fa_src.source_location) as origin_location_list,
+           iff(d.demand_event_type = 'approval', coalesce(oe.origin_conflict_flag, 0), 0) as origin_conflict_flag,
+           od.origin_location                                                   as location_nearest_demand_raw,   -- QA only
            od.origin_census_date,
            -- SQL14 requested facility (preference; never used for cohort D)
-           rq.requested_site, rq.requested_care_stream, rq.n_sites_requested,
+           rq.most_frequently_observed_rated_site, rq.requested_care_stream, rq.n_sites_requested,
            coalesce(rq.requested_cochrane_flag, 0) as requested_cochrane_flag, rq.requested_cochrane_sites,
            -- SQL14 community candidates (chosen in master_final by residency_source)
            r.registry_postal_latest,
@@ -1152,7 +1173,8 @@ master as (
     from demand_in_window d
     left join pat_ids   pi  on pi.phn = d.phn                                              -- SQL14
     left join reg_demo  rg  on rg.phn = d.phn                                              -- SQL14
-    left join origin_at_demand od on od.phn = d.phn                                        -- SQL14
+    left join origin_at_demand od on od.phn = d.phn                                        -- SQL14 (QA)
+    left join origin_entry     oe on oe.phn = d.phn                                        -- SQL14
     left join (select phn, min_by(source_location, admission_date) as source_location      -- SQL14: first reporting-scope admission
                from adm_rep group by phn) fa_src on fa_src.phn = d.phn
     left join requested rq  on rq.phn = d.phn                                              -- SQL14
@@ -1300,14 +1322,18 @@ select
     rated_cochrane, cochrane_placement_residency_unresolved, b_catchment, cochrane_facing,
     -- demographics
     dob, sex, demographic_source, dob_strata, dob_registry, dob_sources_agree, sex_conflict_registry,
-    -- residence (from the deciding address only)
+    -- residence (from the deciding address only) + what the deciding address IS
     residency_final, residency_source, residency_evidence,
     residence_postal_code_at_demand, residence_community_at_demand, residence_local_name_at_demand,
+    latest_window_fye as residence_reference_fye,          -- registry: the fiscal year of the deciding address
+    strata_effective_from as strata_address_effective_from, -- Strata: the version effective on demand_dt
+    strata_city_at_demand,                                  -- labelled fallback for out-of-province postal codes
     strata_address_is_placeholder, strata_residency,
-    -- origin setting nearest the demand event
-    origin_setting_raw, origin_source, origin_census_date,
-    -- requested / preferred facility
-    requested_site, requested_care_stream, n_sites_requested, requested_cochrane_flag, requested_cochrane_sites,
+    -- origin setting at first list entry (tie-audited); nearest-demand value kept for QA
+    origin_setting_raw, origin_source, origin_entry_census_date, n_origin_locations_at_entry, origin_location_list, origin_conflict_flag,
+    location_nearest_demand_raw, origin_census_date,
+    -- rated / requested facility (observed frequency, not preference)
+    most_frequently_observed_rated_site, requested_care_stream, n_sites_requested, requested_cochrane_flag, requested_cochrane_sites,
     -- placement
     first_placement_dt, first_placement_site, first_placement_stream, first_placement_in_cochrane,
     first_placement_after_followup, first_placement_dt_alt, days_to_placement, placed,
