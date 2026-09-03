@@ -46,6 +46,44 @@ the final deliverable and records every decision that is still open.
 | PHN ↔ PATIENT_ID | 1:1 for all 1,137 people with a Strata patient record; 2 unresolved-residency D3 people have no patient record at all (waitlist PHN only). No split records, so no canonical-ID choice was needed. 59 cohort PHNs carry `IDENTIFIER1_IS_AUTOGEN = 1`, yet all 59 have registry rows and DOBs, so the flag does not mean a fabricated PHN here. |
 | Placeholder addresses | 17 flagged in the extract (including the new dummy patterns); none resolves residency. |
 
+## Eighth review (2026-09-03) — two populations, not one
+
+The 987-person population is the INCIDENT-DEMAND scope (new FY2022–FY2026
+Type A/B demand; holds A/B/C/D). It is not the consultant activity population:
+814 people had a Cochrane-rated spell in the window and 117 of them fall
+outside the incident gate (demand before FY2022, or already in residential
+care at the demand event). They contributed 183 Cochrane-rated spells and 283
+spells in all. The fix is conceptual and touches no cohort.
+
+| # | Reviewer requirement | Status |
+|---|---|---|
+| 1 | Rename the 987 → `INCIDENT_DEMAND_SCOPE` | done |
+| 2 | `CONSULTANT_ACTIVITY_SCOPE` from activity records: any FY2022–26 spell rated for a Cochrane site, any spell as a Town resident, no demand gate | done in the builder; residency at the activity anchor needs **sql/18** (activity-person extract: sql/14 with the anchor moved to first window activity, no gate, no prior-care exclusion, no cohort columns) |
+| 3 | Placement activity: all Cochrane-site admissions plus placements of Town residents and Cochrane-rated seekers; STUDY_ID preserved | done: event file = Cochrane-site events (all) ∪ events of everyone in the person file |
+| 4 | April-2020 people: out of A/B/C/D, in as activity, labelled carry-in | done: `ACTIVITY_STATUS = pre-window demand (carry-in)` |
+| 5 | X1–X4 kept; "rated for a Cochrane site" wording | done |
+| 6 | Sex: Epic as labelled fallback | done: incident scope 985/987 (Registry 976, Epic 9); Registry-vs-Epic disagreements 0 |
+| 7 | DOB: exact two-of-three consensus, QA flag/source kept | done: consensus Strata+Registry+Epic 928, Strata+Epic 44, Registry+Epic 14, Strata single 2, no consensus 1 (Strata kept); median age 83 and bands unchanged |
+| 8 | Origin at entry kept; sub-acute folded into Acute Care | done (detail retained) |
+| 9 | Placement-site completeness on the placed denominator | done |
+| 10 | 39 vs 40 outside-universe Cochrane events | distinct labels: 39 people have no attribute record at all; the 40th is the April-2020 carry-in person present in the QA table |
+| 11 | `Z1Z1Z1` must not establish residency | **sql/09 rev 2.10 + sql/14 + sql/18**: the non-Alberta branch now requires a syntactically valid, non-dummy Canadian postal code. Universe impact: 46 invalid Strata codes, 2 decided residency (both non-Town, neither in a cohort) → A/B/C/D unchanged by construction. The builder fails until sql/14 is re-run |
+
+### Populations on the current extracts (before sql/18)
+
+| measure | count |
+|---|---|
+| incident-demand people | 987 |
+| unique people with a Cochrane-rated spell | 814 (697 incident, 117 outside) |
+| Town-resident people with a spell (sql/14 residency only) | 351 |
+| waitlist spells, activity scope / all | 2,390 / 66,432 |
+| Cochrane-facility placement events | 344 for 329 people |
+| consultant activity scope | 1,130 |
+| union in the consultant deliverables | 1,130 = 987 incident + 2 carry-in + 141 activity-only (attributes pending sql/18) |
+
+sql/18 will add Town residents with a window spell who are outside the incident
+universe, so the activity scope will grow beyond 1,130.
+
 ## Seventh-review corrections (2026-09-03) — status
 
 | # | Reviewer requirement | Status |

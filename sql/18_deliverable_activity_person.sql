@@ -1,50 +1,14 @@
 -- ============================================================================
--- DELIVERABLE PERSON EXTRACT — sql/09 rev 2.10 + ENRICHMENT. ONE ROW PER PERSON.
--- Generated from sql/09 by text insertion: every cohort CTE is byte-identical
--- to rev 2.9, so A/B/C/D cannot move. Enrichment is LEFT-joined by PHN and
--- can only add columns. analysis/08 stops if the headline differs from
--- 89/148/192/69. Feed the CSV to analysis/07 (checker) and analysis/08 (build).
---
--- ENRICHMENT (all new CTEs are marked "-- SQL14"):
---   pat_ids    Strata PATIENT_ID(s) per PHN, multiplicity explained, canonical
---              = the ID carrying the most waitlist + admission activity (never
---              MIN); IDENTIFIER1_IS_AUTOGEN carried as a flag
---   demo       DOB primary Strata patient.BIRTH_DATE, fallback Registry
---              BIRTH_DT; SEX from Registry (F/M) only - Strata GENDER is null;
---              agreement and conflicts counted (DEMOGRAPHIC_SOURCE, DOB_*)
---   origin_at_demand  waitlist current_location on the census row nearest
---              DEMAND_DT (latest <= demand, else earliest after); admission-
---              only events use that admission's source_location
---   requested  waitlist ratings in the window: modal rated site, distinct
---              site count, modal care stream, any Cochrane rating
---   community  Statistics Canada CSD name of the postal code that DECIDED
---              residency (registry deciding year, else Strata at demand);
---              never from a fallback or historical address
---   placeholder rule extended: ANY STREET / TEST / SAMPLE / DUMMY / FAKE
---
---
--- WHAT CHANGED AND WHY (each item is a review finding)
---   1. Outcome capped at follow_up_end. A placement after 2026-03-31 cannot
---      make someone A or C; it is carried as first_placement_after_followup
---      for sensitivity only.
---   2. Demand event is the APPROVAL date, not first census appearance. 8.2%
---      of people who appear on the list are never approved; they were never
---      waiting for a bed and are not unmet demand. first_list_appearance is
---      kept for sensitivity. coalesce(assess_approved_date,
---      calculated_assess_approved_date): the second is populated for 98% vs
---      93%, and where both exist they agree 96% of the time. ASK ALA which is
---      operational.
---   3. D is split. D1 = on the census on the last day (actively waiting).
---      D2 = died before any placement. D3 = exited, no placement observed,
---      outcome unknown. These are different findings.
---   4. Two vocabularies. HISTORICAL residential scope (Type A, B, Level 3,
---      and the legacy "Retired - DAL/DEL" codes) decides "already in care
---      before the window", exactly as query 01 did. REPORTING scope (Type A,
---      B) decides the outcome. Using the reporting filter for history let a
---      Level 3 -> Type A transfer look like new demand.
---   5. "Province-wide" is WITHDRAWN — CONFIRMED by 10_coverage_checks: the
---      source is the Calgary and Edmonton Strata instances (936 sites,
---      294,659 admissions) with 7 vestigial sites and 204 admissions in the
+-- ACTIVITY-PERSON EXTRACT — attributes for the CONSULTANT ACTIVITY population
+-- Generated from sql/14 (itself sql/09 rev 2.10 + enrichment) with ONE change:
+-- the anchor is the person's first activity inside FY2022-FY2026 (first Type
+-- A/B waitlist appearance, or first Cochrane-site admission), with no new-
+-- demand gate and no prior-residential-care exclusion. Residency, community,
+-- demographics, origin at first entry and rated sites are computed exactly as
+-- in sql/14 but at that anchor. No A/B/C/D here: cohorts live in sql/14.
+-- Feed the CSV to analysis/08 --activity-person.
+-- ============================================================================
+with 7 vestigial sites and 204 admissions in the
 --      other three zones. A Town of Cochrane resident placed in Central zone
 --      is invisible here and lands in D3. Every D figure carries "in the
 --      Calgary and Edmonton Strata instances"; D3 is an upper bound. See
@@ -408,68 +372,44 @@ first_list as (
 -- A person on the list but never approved was never ready for a bed. They
 -- are carried (was_approved = 0) and excluded from A/B/C/D.
 -- "Already in care" uses the HISTORICAL scope.
+-- SQL18 anchor = FIRST ACTIVITY IN THE WINDOW, not the incident demand event:
+-- the earlier of the first Type A/B waitlist appearance in FY2022-FY2026 and
+-- the first admission to a Cochrane site in FY2022-FY2026. No new-demand gate,
+-- no prior-residential-care exclusion: this is the ACTIVITY population.
+coch_adm_first as (
+    select phn, min(admission_date) as first_coch_adm
+    from adm_rep cross join w
+    where in_cochrane = 1 and admission_date >= w.win_start and admission_date <= w.follow_up_end
+    group by phn
+),
 demand as (
-    select coalesce(l.phn, a.phn)                                          as phn,
-           least(coalesce(l.first_approval_dt, '9999-12-31'::date),
-                 coalesce(a.first_rep_adm,     '9999-12-31'::date))         as demand_dt,
-           least(coalesce(l.first_approval_dt_alt, '9999-12-31'::date),
-                 coalesce(a.first_rep_adm,         '9999-12-31'::date))     as demand_dt_alt,     -- G1
+    select coalesce(l.phn, c.phn)                                          as phn,
+           least(coalesce(l.first_list_appearance, '9999-12-31'::date),
+                 coalesce(c.first_coch_adm,        '9999-12-31'::date))     as demand_dt,       -- ACTIVITY ANCHOR
+           least(coalesce(l.first_list_appearance, '9999-12-31'::date),
+                 coalesce(c.first_coch_adm,        '9999-12-31'::date))     as demand_dt_alt,
            l.first_approval_dt_alt,
-           iff(l.first_approval_dt is not null
-               and (a.first_rep_adm is null or l.first_approval_dt <= a.first_rep_adm),
-               'approval', 'admission')                                    as demand_event_type,
-           iff(l.first_approval_dt is not null or a.first_rep_adm is not null, 1, 0) as was_approved,
+           iff(l.first_list_appearance is not null
+               and (c.first_coch_adm is null or l.first_list_appearance <= c.first_coch_adm),
+               'approval', 'admission')                                    as demand_event_type,   -- here: 'waitlist' vs 'Cochrane admission'
+           1                                                               as was_approved,
            l.first_list_appearance, l.first_approval_dt, l.setting_at_list_entry,
            l.last_seen_on_list, coalesce(l.on_list_at_followup,0) as on_list_at_followup,
            coalesce(l.left_truncated, 0)                                    as left_truncated,
            coalesce(l.rated_cochrane, 0)                                    as rated_cochrane,
            h.first_residential_ever, h.first_residential_stream
     from first_list l
-    full outer join (select phn, min(admission_date) as first_rep_adm from adm_rep group by phn) a
-           on a.phn = l.phn
-    left join first_ever_residential h on h.phn = coalesce(l.phn, a.phn)
-    cross join w
-    where h.first_residential_ever is null or h.first_residential_ever >= w.win_start
-    -- (the stricter test against the demand event itself is in demand_in_window)
+    full outer join coch_adm_first c on c.phn = l.phn
+    left join first_ever_residential h on h.phn = coalesce(l.phn, c.phn)
 ),
 demand_in_window as (
-    -- QUALIFY needs a window function in Snowflake; these flags are plain
-    -- expressions, so they are projected in a subquery and filtered with WHERE.
-    select * from (
-        select d.*,
-               iff(month(d.demand_dt) >= 4, year(d.demand_dt) + 1, year(d.demand_dt))         as demand_fye,
-               iff(month(d.demand_dt_alt) >= 4, year(d.demand_dt_alt) + 1, year(d.demand_dt_alt)) as demand_fye_alt,
-               -- G1: membership under each anchor. The universe admits EITHER.
-               iff(d.demand_dt >= w.win_start and d.demand_dt < w.win_end
-                   and (d.first_residential_ever is null or d.first_residential_ever >= d.demand_dt), 1, 0) as in_window,
-               iff(d.demand_dt_alt >= w.win_start and d.demand_dt_alt < w.win_end
-                   and (d.first_residential_ever is null or d.first_residential_ever >= d.demand_dt_alt), 1, 0) as in_window_alt
-        from demand d cross join w
-        -- ALREADY IN RESIDENTIAL CARE WHEN THE DEMAND EVENT HAPPENED is inside
-        -- each in_window flag (rev 2.3 rule, tested against the demand event).
-    )
-    where in_window = 1 or in_window_alt = 1
+    select d.*,
+           iff(month(d.demand_dt) >= 4, year(d.demand_dt) + 1, year(d.demand_dt))         as demand_fye,
+           iff(month(d.demand_dt_alt) >= 4, year(d.demand_dt_alt) + 1, year(d.demand_dt_alt)) as demand_fye_alt,
+           1 as in_window, 1 as in_window_alt
+    from demand d
 ),
 
--- ── STEP 5 — RESIDENCY, TWO METHODS, MISSINGNESS SPLIT ─────────────────────
--- LEFT join to the postal lookup: an unmapped code keeps the person and is
--- reported as such, instead of deleting them into "no registry record".
-geo as (
-    -- REV 2.8: count digits BEFORE padding. >9 or 0 digits are rejected (never
-    -- truncated); 1-8 are padded because the registry stores PHN numerically.
-    select iff(length(rd.digits) between 1 and 9, lpad(rd.digits, 9, '0'), null) as phn,
-           iff(length(rd.digits) between 1 and 8, 1, 0)                     as phn_was_padded,
-           rd.fye,
-           rd.postal_cd,
-           iff(pc.postalcode is null, 0, 1)                            as mapped,
-           iff(upper(trim(pc.csdname_2021)) = 'COCHRANE'
-               and upper(trim(pc.csdtype_2021)) = 'T', 1, 0)           as in_town,
-           iff(upper(trim(pc.local_name)) = 'COCHRANE | SPRINGBANK', 1, 0) as in_area
-    from (select r.fye, r.postal_cd, regexp_replace(r.phn::string,'[^0-9]','') as digits
-          from db_source_ah_provincial_registry.curated.provincial_registry r) rd
-    left join db_source_ah_postal_code.curated.tb_postal_code pc on pc.postalcode = rd.postal_cd
-    where length(rd.digits) between 1 and 9 and rd.digits <> '000000000'
-),
 res_rows as (
     select d.phn, d.demand_fye, d.demand_fye_alt, g.fye, g.postal_cd, g.mapped, g.in_town, g.in_area, g.phn_was_padded,
            iff(g.fye between d.demand_fye-3 and d.demand_fye-1, 1, 0)         as in_window,
@@ -1308,41 +1248,30 @@ classified as (
     left join first_site_alt fa on fa.phn = m.phn
 )
 
--- OUTPUT — MINIMUM DATASET. The full audit universe (33,046 rows, 120+
--- columns) was validated on the rev 2.9 export and is too large to move; this
--- extract carries only the people who bear on Cochrane and only the columns
--- the deliverable uses. Every cohort member has cochrane_facing = 1, so the
--- 89/148/192/69 gate in analysis/08 still applies in full. rated_cochrane = 1
--- is added so the "seeking a Cochrane placement" group is present.
--- No Epic, building-key, fallback-registry or alternative-anchor audit
--- columns: they live in the rev 2.9 export and the sign-off record.
+-- OUTPUT — ACTIVITY PEOPLE. One row per person with any Type A/B waitlist
+-- spell or Cochrane-site admission in FY2022-FY2026 who is a Town/catchment
+-- resident (at the activity anchor), was rated for a Cochrane/Hawthorne site,
+-- or was admitted to a Cochrane site. No cohort columns: A/B/C/D belong to
+-- the incident-demand extract (sql/14) only.
 select
-    -- identification (internal QA only; stripped from the consultant file)
-    phn, patient_id, patient_id_all, n_patient_ids, phn_patient_id_multiplicity, phn_is_autogen_any,
-    -- cohort / pathway
-    cohort, d_class, in_window, was_approved, record_valid, record_invalid_reason,
-    demand_dt, demand_fye, demand_event_type, demand_dt_alt,
-    first_list_appearance, first_approval_dt, setting_at_list_entry, last_seen_on_list, on_list_at_followup,
-    rated_cochrane, cochrane_placement_residency_unresolved, b_catchment, cochrane_facing,
-    -- demographics
+    phn, patient_id, patient_id_all, n_patient_ids, phn_patient_id_multiplicity,
+    demand_dt as activity_anchor_dt, demand_fye as activity_anchor_fye,
+    iff(demand_event_type = 'approval', 'first waitlist appearance in window', 'first Cochrane-site admission in window') as activity_anchor_type,
+    first_list_appearance, first_approval_dt, last_seen_on_list, on_list_at_followup, left_truncated, rated_cochrane,
+    first_residential_ever, first_residential_stream,     -- prior residential care, for the carry-in / prior-demand label
     dob, sex, demographic_source, dob_strata, dob_registry, dob_sources_agree, sex_conflict_registry,
-    -- residence (from the deciding address only) + what the deciding address IS
     residency_final, residency_source, residency_evidence,
-    residence_postal_code_at_demand, residence_community_at_demand, residence_local_name_at_demand,
-    latest_window_fye as residence_reference_fye,          -- registry: the fiscal year of the deciding address
-    strata_effective_from as strata_address_effective_from, -- Strata: the version effective on demand_dt
-    strata_city_at_demand,                                  -- labelled fallback for out-of-province postal codes
+    residence_postal_code_at_demand as residence_postal_code_at_anchor,
+    residence_community_at_demand   as residence_community_at_anchor,
+    residence_local_name_at_demand  as residence_local_name_at_anchor,
+    latest_window_fye as residence_reference_fye, strata_effective_from as strata_address_effective_from, strata_city_at_demand as strata_city_at_anchor,
     strata_address_is_placeholder, strata_residency,
-    -- origin setting at first list entry (tie-audited); nearest-demand value kept for QA
     origin_setting_raw, origin_source, origin_entry_census_date, n_origin_locations_at_entry, origin_location_list, origin_conflict_flag,
-    location_nearest_demand_raw, origin_census_date,
-    -- rated / requested facility (observed frequency, not preference)
     most_frequently_observed_rated_site, requested_care_stream, n_sites_requested, requested_cochrane_flag, requested_cochrane_sites,
-    -- placement
-    first_placement_dt, first_placement_site, first_placement_stream, first_placement_in_cochrane,
-    first_placement_after_followup, first_placement_dt_alt, days_to_placement, placed,
-    first_level3_dt, death_dt
+    death_dt
 from classified
-where cochrane_facing = 1 or rated_cochrane = 1
-order by cohort nulls last, demand_dt
+where residency_final in ('Town of Cochrane', 'Cochrane catchment')
+   or requested_cochrane_flag = 1
+   or phn in (select phn from coch_adm_first)
+order by demand_dt
 ;

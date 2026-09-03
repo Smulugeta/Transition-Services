@@ -1,6 +1,6 @@
 -- ============================================================================
 -- MASTER DEMAND COHORT — A / B / C / D — STANDALONE, ONE ROW PER PERSON
--- Revision 2.9: occupancy-based facility exclusion REMOVED from the production residency hierarchy (audit flag only). Paste-and-run.
+-- Revision 2.10: as 2.9, plus an invalid or dummy postal code (Z1Z1Z1 …) can no longer establish non-Town residency. Paste-and-run.
 -- Feed the CSV to analysis/07_master_cohort_check.py.
 --
 -- WHAT CHANGED AND WHY (each item is a review finding)
@@ -87,6 +87,17 @@
 --     years old (median 16). It does not remove anyone from the residency
 --     uncertainty around D; the maximum is primary D plus every valid
 --     unresolved approved-unplaced person.
+--
+-- REV 2.10 — INVALID POSTAL CODES CANNOT ESTABLISH RESIDENCY
+--   The Strata / Epic rule "first letter not T -> Not a Cochrane-area
+--   resident" accepted any string, so the dummy code Z1Z1Z1 (31 people in
+--   the universe) classified people as non-Town. The branch now requires a
+--   syntactically valid Canadian postal code that is not a known dummy;
+--   anything else stays UNRESOLVED (rule 5: never city_name). On the rev 2.9
+--   universe 46 Strata postal codes at demand are invalid; Strata decided
+--   residency for 2 of them (both non-Town, neither in a cohort), so
+--   A/B/C/D are unchanged by construction. Malformed T-codes (letter O for
+--   zero) were already UNRESOLVED because they fail the geography lookup.
 --
 -- REV 2.9 — SEVENTH REVIEW: OCCUPANCY IS AN AUDIT FLAG, NOT AN EXCLUSION
 --   The reviewer's independent run of rev 2.8.3 found a material regression:
@@ -650,7 +661,8 @@ strata_active as (
                      and upper(trim(pc.local_name)) = 'COCHRANE | SPRINGBANK' then 'Cochrane catchment'
                 when pc.postalcode is not null                       then 'Not a Cochrane-area resident'
                 when s.postal_norm is not null and left(s.postal_norm,1) <> 'T'
-                                                                     then 'Not a Cochrane-area resident'
+                     and regexp_like(s.postal_norm, '[ABCEGHJ-NPRSTVXY][0-9][ABCEGHJ-NPRSTV-Z][0-9][ABCEGHJ-NPRSTV-Z][0-9]') and s.postal_norm not in ('Z1Z1Z1','A1A1A1','H0H0H0','X0X0X0','T0T0T0','A0A0A0')
+                                                                     then 'Not a Cochrane-area resident'   -- REV 2.10: a VALID out-of-Alberta code only
                 else 'UNRESOLVED' end                                 as class_raw
     from strata_active_base s
     left join strata_conc_exact ce on ce.rk = s.rk
@@ -685,7 +697,8 @@ strata_active_alt_all as (
                      and upper(trim(pc.local_name)) = 'COCHRANE | SPRINGBANK' then 'Cochrane catchment'
                 when pc.postalcode is not null                       then 'Not a Cochrane-area resident'
                 when a.postal_norm is not null and left(a.postal_norm,1) <> 'T'
-                                                                     then 'Not a Cochrane-area resident'
+                     and regexp_like(a.postal_norm, '[ABCEGHJ-NPRSTVXY][0-9][ABCEGHJ-NPRSTV-Z][0-9][ABCEGHJ-NPRSTV-Z][0-9]') and a.postal_norm not in ('Z1Z1Z1','A1A1A1','H0H0H0','X0X0X0','T0T0T0','A0A0A0')
+                                                                     then 'Not a Cochrane-area resident'   -- REV 2.10: a VALID out-of-Alberta code only
                 else 'UNRESOLVED' end                                 as class_raw
     from demand_in_window d
     join strata_addr_b a on a.phn = d.phn and a.eff_from <= d.demand_dt_alt
@@ -737,7 +750,8 @@ strata_at_demand_alt as (
                      and upper(trim(pc.local_name)) = 'COCHRANE | SPRINGBANK' then 'Cochrane catchment'
                 when pc.postalcode is not null                       then 'Not a Cochrane-area resident'
                 when s.postal_norm is not null and left(s.postal_norm,1) <> 'T'
-                                                                     then 'Not a Cochrane-area resident'
+                     and regexp_like(s.postal_norm, '[ABCEGHJ-NPRSTVXY][0-9][ABCEGHJ-NPRSTV-Z][0-9][ABCEGHJ-NPRSTV-Z][0-9]') and s.postal_norm not in ('Z1Z1Z1','A1A1A1','H0H0H0','X0X0X0','T0T0T0','A0A0A0')
+                                                                     then 'Not a Cochrane-area resident'   -- REV 2.10: a VALID out-of-Alberta code only
                 else 'UNRESOLVED' end                                 as class_raw
     from strata_active_alt_base s
     join strata_alt_summary ss on ss.phn = s.phn
@@ -856,7 +870,8 @@ epic_active as (
                      and upper(trim(pc.local_name)) = 'COCHRANE | SPRINGBANK' then 'Cochrane catchment'
                 when pc.postalcode is not null                       then 'Not a Cochrane-area resident'
                 when s.postal_norm is not null and left(s.postal_norm,1) <> 'T'
-                                                                     then 'Not a Cochrane-area resident'
+                     and regexp_like(s.postal_norm, '[ABCEGHJ-NPRSTVXY][0-9][ABCEGHJ-NPRSTV-Z][0-9][ABCEGHJ-NPRSTV-Z][0-9]') and s.postal_norm not in ('Z1Z1Z1','A1A1A1','H0H0H0','X0X0X0','T0T0T0','A0A0A0')
+                                                                     then 'Not a Cochrane-area resident'   -- REV 2.10: a VALID out-of-Alberta code only
                 else 'UNRESOLVED' end                                 as class_raw
     from epic_active_base s
     left join epic_conc_exact ce on ce.rk = s.rk
