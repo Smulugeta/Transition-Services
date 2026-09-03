@@ -280,6 +280,40 @@ def summaries(P, E):
                      sum(1 for p in inc if p["COHORT"] == "A"), sum(1 for p in inc if p["COHORT"] == "B"), sum(1 for p in inc if p["B_CATCHMENT"] == "1")])
     S.append(md_table(["FYE", "unique people placed (first placement)", "placement events of A-D people (all sites)", "Cochrane-site events, all people (events / people)", "Cochrane first placements (A+B)", "Type A", "Type B",
                        "Town residents placed in Cochrane (A)", "non-Town placed in Cochrane (B)", "of B: catchment"], rows))
+    # Cochrane facility activity at the EVENT grain
+    if E:
+        S.append("### 2a. Cochrane facility activity — EVENT grain, all admissions to Bethany Cochrane LTC, Hawthorne SL4 and Hawthorne SL4D\n")
+        S.append("Every qualifying admission to a Cochrane Type A/B site, whoever the person is. Not comparable with A+B, which counts people once at their first placement.\n")
+        ce = [e for e in E if e["PLACEMENT_IN_COCHRANE"] == "1"]
+        def cat(e):
+            if e["PERSON_COHORT"] in ("A", "B"): return "first placement of A/B" if e["IS_FIRST_PLACEMENT"] == "1" else "later move of an A/B person"
+            if e["PERSON_COHORT"] in ("C", "D"): return "later move of a C person into Cochrane"
+            if e["PERSON_POPULATION"].startswith("X1"): return "first placement, residency unresolved (X1)"
+            if e["PERSON_IN_DELIVERABLE"] == "1": return "other deliverable person"
+            return "person outside the demand universe (demand before FY2022 or already in care)"
+        cats = ["first placement of A/B", "first placement, residency unresolved (X1)", "later move of an A/B person", "later move of a C person into Cochrane", "other deliverable person", "person outside the demand universe (demand before FY2022 or already in care)"]
+        cats = [c for c in cats if any(cat(e) == c for e in ce)]
+        rows = []
+        for y in FYES + ["**Total**"]:
+            ys = [e for e in ce if y == "**Total**" or e["ADMISSION_FYE"] == y]
+            rows.append([y, len(ys), len({e["PHN"] for e in ys})] + [sum(1 for e in ys if cat(e) == c) for c in cats])
+        S.append(md_table(["FYE", "Cochrane-site events", "unique people"] + cats, rows))
+        rows = []
+        sites = sorted({e["PLACEMENT_SITE"] for e in ce})
+        for y in FYES + ["**Total**"]:
+            ys = [e for e in ce if y == "**Total**" or e["ADMISSION_FYE"] == y]
+            rows.append([y] + [sum(1 for e in ys if e["PLACEMENT_SITE"] == st) for st in sites] + [sum(1 for e in ys if e["CARE_STREAM"] == "Type A"), sum(1 for e in ys if e["CARE_STREAM"] == "Type B")])
+        S.append("Cochrane-site events by site and care stream:\n" + md_table(["FYE"] + sites + ["Type A", "Type B"], rows))
+        rows = []
+        for y in FYES + ["**Total**"]:
+            ys = [e for e in ce if y == "**Total**" or e["ADMISSION_FYE"] == y]
+            rc = Counter(e["RESIDENCE_CLASS"] for e in ys)
+            rows.append([y, rc["Town"], rc["Cochrane catchment"], rc["non-Town"], rc["unresolved"], rc["not in person table"]])
+        S.append("Cochrane-site events by the person's residence class (from the person table; 'not in person table' = outside the demand universe):\n"
+                 + md_table(["FYE", "Town", "Cochrane catchment", "non-Town", "unresolved", "not in person table"], rows))
+        ae = [e for e in E if e["PERSON_COHORT"]]
+        S.append(f"Events of A-D people: {len(ae):,} admissions for {len({e['PHN'] for e in ae}):,} people; {sum(1 for e in ae if e['IS_FIRST_PLACEMENT'] != '1'):,} are moves after the first placement. Origin of those later moves: "
+                 + "; ".join(f"{k} {v}" for k, v in Counter(e["ORIGIN_SETTING_DETAIL"] for e in ae if e["IS_FIRST_PLACEMENT"] != "1").most_common(5)) + ".\n")
     # wait time
     S.append("## 3. Time to placement — people with an observed qualifying placement only (A, B, C)\n")
     def wt(rows_, k="DAYS_TO_PLACEMENT"):

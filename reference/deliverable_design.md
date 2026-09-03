@@ -29,9 +29,9 @@ the final deliverable and records every decision that is still open.
 |---|---|---|
 | 0 | `sql/13_enrichment_inventory.sql` — schemas, PHN↔PATIENT_ID multiplicity, origin vocabulary, placeholder addresses, rated sites, demographic completeness, community-name column | **written; awaiting results** |
 | 1 | `sql/14_deliverable_person.sql` — sql/09 rev 2.9 plus enrichment; classification CTE byte-identical; output = Cochrane-facing or Cochrane-rated people only, 51 named columns | **run 2026-09-03: 1,139 rows; 89/148/192/69 reproduced; 21 QA checks pass** |
-| 2 | `sql/15_deliverable_events.sql` — one row per qualifying Type A/B admission in the window, all people; builder scopes the views | **written; awaiting run** |
-| 3 | `analysis/08_deliverable_build.py` — STUDY_ID, QA assertions, four deliverable files, reviewer pre-check | **runs on the sql/14 export**; event views await sql/15 |
-| 4 | reviewer pre-check (the 12 items) | provisional version produced; final after steps 1–2 |
+| 2 | `sql/15_deliverable_events.sql` — one row per qualifying Type A/B admission in the window, all people; builder scopes the views | **run 2026-09-03: 39,993 admissions, 32,043 people; every placed cohort member's first placement present; 344 Cochrane-site events** |
+| 3 | `analysis/08_deliverable_build.py` — STUDY_ID, QA assertions, four deliverable files, reviewer pre-check | **complete on sql/14 + sql/15**; 25 QA checks pass |
+| 4 | reviewer pre-check (the 12 items) | **final version produced 2026-09-03; sent for review** |
 | 5 | publish `COCHRANE_DEMAND_CONSULTANT`, `COCHRANE_PLACEMENT_ACTIVITY`, `COCHRANE_SUMMARY` | not before the reviewer clears step 4 |
 
 ## Findings from the sql/14 run (2026-09-03)
@@ -45,6 +45,23 @@ the final deliverable and records every decision that is still open.
 | Requested site | 401 of 498 rated at least one site (median 2 sites; up to 30). 97 have no rated site on any census row: reported as "(no site rated)", not imputed. Modal sites: Bethany Cochrane LTC 47, Hawthorne SL4 45, Hawthorne SL4D 24. |
 | PHN ↔ PATIENT_ID | 1:1 for all 1,137 people with a Strata patient record; 2 unresolved-residency D3 people have no patient record at all (waitlist PHN only). No split records, so no canonical-ID choice was needed. 59 cohort PHNs carry `IDENTIFIER1_IS_AUTOGEN = 1`, yet all 59 have registry rows and DOBs, so the flag does not mean a fabricated PHN here. |
 | Placeholder addresses | 17 flagged in the extract (including the new dummy patterns); none resolves residency. |
+
+## Findings from the sql/15 run (event grain, 2026-09-03)
+
+- 344 admissions to the three Cochrane Type A/B sites in FY2022–FY2026 for 329
+  people: Bethany Cochrane LTC 133, Hawthorne SL4 167, Hawthorne SL4D 44.
+  By fiscal year 65 / 79 / 72 / 73 / 55.
+- Of the 344: 237 are the first placements of A and B (reconciles to A+B);
+  2 are X1 first placements; 15 are later moves of A/B people between Cochrane
+  sites; **24 are later moves into Cochrane by C people** (Town residents whose
+  first placement was outside Cochrane); 26 are later moves into Cochrane by
+  non-Town people first placed elsewhere (X2); 40 belong to people outside the
+  demand universe (demand before FY2022 or already in care at the demand event).
+- Events of A–D people: 556 admissions for 429 people; 127 are moves after the
+  first placement, mostly from supportive living (49), long-term care (39) and
+  acute hospital (28).
+- The 24 C-to-Cochrane moves are a finding for the consultant: C counts the
+  first placement only; a person can still reach Cochrane later.
 
 ## Provisional pre-check on the rev 2.9 export (2026-09-03)
 
