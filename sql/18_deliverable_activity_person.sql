@@ -168,6 +168,26 @@ demand_in_window as (
     from demand d
 ),
 
+
+-- ── STEP 5 — RESIDENCY, TWO METHODS, MISSINGNESS SPLIT ─────────────────────
+-- LEFT join to the postal lookup: an unmapped code keeps the person and is
+-- reported as such, instead of deleting them into "no registry record".
+geo as (
+    -- REV 2.8: count digits BEFORE padding. >9 or 0 digits are rejected (never
+    -- truncated); 1-8 are padded because the registry stores PHN numerically.
+    select iff(length(rd.digits) between 1 and 9, lpad(rd.digits, 9, '0'), null) as phn,
+           iff(length(rd.digits) between 1 and 8, 1, 0)                     as phn_was_padded,
+           rd.fye,
+           rd.postal_cd,
+           iff(pc.postalcode is null, 0, 1)                            as mapped,
+           iff(upper(trim(pc.csdname_2021)) = 'COCHRANE'
+               and upper(trim(pc.csdtype_2021)) = 'T', 1, 0)           as in_town,
+           iff(upper(trim(pc.local_name)) = 'COCHRANE | SPRINGBANK', 1, 0) as in_area
+    from (select r.fye, r.postal_cd, regexp_replace(r.phn::string,'[^0-9]','') as digits
+          from db_source_ah_provincial_registry.curated.provincial_registry r) rd
+    left join db_source_ah_postal_code.curated.tb_postal_code pc on pc.postalcode = rd.postal_cd
+    where length(rd.digits) between 1 and 9 and rd.digits <> '000000000'
+),
 res_rows as (
     select d.phn, d.demand_fye, d.demand_fye_alt, g.fye, g.postal_cd, g.mapped, g.in_town, g.in_area, g.phn_was_padded,
            iff(g.fye between d.demand_fye-3 and d.demand_fye-1, 1, 0)         as in_window,
