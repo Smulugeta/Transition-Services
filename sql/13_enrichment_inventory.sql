@@ -141,11 +141,11 @@ from (select phn, count(distinct service_provider_rated_site) as n_sites
       group by phn)
 group by 1 order by 1;
 
--- ── BLOCK 5 — DEMOGRAPHIC COMPLETENESS (edit column names after block 0) ───
+-- ── BLOCK 5 — DEMOGRAPHIC COMPLETENESS (column names confirmed by block 0) ─
 -- Scope proxy: PHNs on the Type A/B waitlist in the window (the demand
 -- universe is a subset of these plus admission-only people).
--- 5a Strata patient.  EXPECTED columns: birth_date, gender (sql/05 assumed
---    birth_date; neither has been confirmed).
+-- Sources: Strata patient.BIRTH_DATE (GENDER is null in this feed - not used);
+--          Registry BIRTH_DT and SEX (F/M), one row per person per FYE.
 with scope as (
     select distinct regexp_replace(phn::string,'[^0-9]','') as phn
     from db_team_continuing_seniors_care.calgary_bi.ts_waitlist_trend_with_ratings_1671
@@ -153,44 +153,48 @@ with scope as (
       and trim(care_type) in ('CAL - Long Term Care','CAL - Supportive Living Level 4 (DAL)',
                               'CAL - Supportive Living Level 4 Dementia (DAL)','EDM - LTC','EDM - DSL4 / DSL4D')
 ),
-p as (
-    select regexp_replace(identifier1::string,'[^0-9]','') as phn,
-           birth_date::date as dob,                    -- EDIT if describe differs
-           gender            as sex                    -- EDIT if describe differs
-    from db_source_strata_health_pathways.raw.patient
+sp as (   -- Strata patient: one DOB per PHN; conflicts counted
+    select phn, min(dob) as dob, count(distinct dob) as n_dob
+    from (select regexp_replace(identifier1::string,'[^0-9]','') as phn, birth_date::date as dob
+          from db_source_strata_health_pathways.raw.patient)
+    where length(phn) = 9 and phn <> '000000000' and dob is not null
+    group by phn
+),
+rg as (   -- Registry: one DOB / SEX per PHN across fiscal years; conflicts counted
+    select phn, min(dob) as dob, count(distinct dob) as n_dob, min(sex) as sex, count(distinct sex) as n_sex
+    from (select iff(length(d) between 1 and 9, lpad(d, 9, '0'), null) as phn, birth_dt::date as dob, sex
+          from (select regexp_replace(phn::string,'[^0-9]','') as d, birth_dt, sex
+                from db_source_ah_provincial_registry.curated.provincial_registry))
+    where phn is not null and phn <> '000000000'
+    group by phn
 )
-select 'strata patient' as source,
-       count(distinct s.phn)                                       as scope_people,
-       count(distinct iff(p.phn is not null, s.phn, null))         as matched,
-       count(distinct iff(p.dob is not null, s.phn, null))         as with_dob,
-       count(distinct iff(p.sex is not null and trim(p.sex) <> '', s.phn, null)) as with_sex,
-       count(distinct iff(p.dob > current_date or p.dob < '1900-01-01', s.phn, null)) as implausible_dob,
-       min(p.dob) as min_dob, max(p.dob) as max_dob
-from scope s left join p on p.phn = s.phn
+select count(*)                                                   as scope_people,
+       count(sp.phn)                                              as strata_dob_present,
+       count(rg.phn)                                              as registry_row_present,
+       count(rg.dob)                                              as registry_dob_present,
+       count_if(rg.sex in ('F','M'))                              as registry_sex_present,
+       count_if(sp.dob is null and rg.dob is null)                as dob_missing_both,
+       count_if(sp.dob is not null and rg.dob is not null)        as dob_in_both,
+       count_if(sp.dob is not null and rg.dob is not null and sp.dob = rg.dob)  as dob_agree,
+       count_if(sp.dob is not null and rg.dob is not null and sp.dob <> rg.dob) as dob_disagree,
+       count_if(sp.dob is not null and rg.dob is not null and abs(datediff('day', sp.dob, rg.dob)) > 366) as dob_disagree_over_1y,
+       count_if(sp.n_dob > 1)                                     as strata_conflicting_dob,
+       count_if(rg.n_dob > 1)                                     as registry_conflicting_dob,
+       count_if(rg.n_sex > 1)                                     as registry_conflicting_sex,
+       count_if(sp.dob > current_date or sp.dob < '1900-01-01')   as strata_implausible_dob,
+       count_if(rg.dob > current_date or rg.dob < '1900-01-01')   as registry_implausible_dob
+from scope s
+left join sp on sp.phn = s.phn
+left join rg on rg.phn = s.phn
 where length(s.phn) = 9;
 
--- 5a2 sex/gender vocabulary in Strata patient
-select gender as value, count(*) as n                              -- EDIT if describe differs
-from db_source_strata_health_pathways.raw.patient group by 1 order by 2 desc;
-
--- 5a3 does DOB DISAGREE between duplicate patient rows for one PHN?
-with p as (
-    select regexp_replace(identifier1::string,'[^0-9]','') as phn, birth_date::date as dob, gender as sex   -- EDIT
-    from db_source_strata_health_pathways.raw.patient
-)
-select count_if(n_dob > 1) as phns_with_conflicting_dob, count_if(n_sex > 1) as phns_with_conflicting_sex, count(*) as phns_with_multiple_rows
-from (select phn, count(distinct dob) as n_dob, count(distinct sex) as n_sex, count(*) as n
-      from p where length(phn) = 9 group by phn having count(*) > 1);
-
--- 5b Provincial Registry. EXPECTED: a birth-date column and a sex column
---    (names unknown; PERS_ prefix seen for PERS_REAP_END_DATE). Fill in from
---    the describe, then run.
---    select count(distinct phn), count(distinct iff(<dob col> is not null, phn, null)), count(distinct iff(<sex col> is not null, phn, null))
---    from db_source_ah_provincial_registry.curated.provincial_registry;
+-- 5b registry sex vocabulary (expect F, M; anything else is reported, not mapped)
+select sex, count(distinct phn) as people
+from db_source_ah_provincial_registry.curated.provincial_registry group by 1 order by 2 desc;
 
 -- 5c Epic (only if 0b succeeded). Clarity PATIENT normally has BIRTH_DATE and
---    SEX_C (code; ZC_SEX.NAME is the label).
---    select count(*) , count(birth_date), count(sex_c) from db_source_epic_clarity.raw.patient;
+--    SEX_C (code; ZC_SEX.NAME is the label). Sensitivity source only.
+--    select count(*), count(birth_date), count(sex_c) from db_source_epic_clarity.raw.patient;
 
 -- ── BLOCK 6 — COMMUNITY NAME COLUMNS IN THE POSTAL GEOGRAPHY ───────────────
 -- Which column carries the community name to publish? Show what the T4C

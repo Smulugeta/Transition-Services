@@ -31,22 +31,22 @@ describe output; usability is a separate judgement recorded in the notes.
 No DOB, no sex/gender. Carries `PATIENT_ID`, so the PHN→PATIENT_ID linkage can
 be cross-checked against the waitlist as well as the patient table.
 
-## Provincial Registry (22 columns; first 14 seen)
+## Provincial Registry (22 columns, all seen)
 `PROVINCIAL_REGISTRY_ID`, `PHN` (NUMBER — leading zero lost, hence the padding
-rule), `BIRTH_DT` (TIMESTAMP_NTZ) with `BIRTH_DT_SRC`, `AGE_GRP_CD`,
-`POSTAL_CD`, `ACTIVE_COVERAGE`, `DEATH_IND`, `IN_MIGRATION_IND`,
-`OUT_MIGRATION_IND`, `ABORG_SAI`. **Sex/gender column not yet seen** (remaining
-8 rows pending). Registry is one row per person per fiscal year, so DOB must be
-taken as a single value per PHN and conflicts across years counted.
+rule), `BIRTH_DT` (TIMESTAMP_NTZ) with `BIRTH_DT_SRC`, **`SEX` (VARCHAR(1),
+values F, M)**, `AGE_GRP_CD`, `POSTAL_CD`, `RHA`, `ACTIVE_COVERAGE`,
+`DEATH_IND`, `BIRTH_IND`, `IN_MIGRATION_IND`, `OUT_MIGRATION_IND`,
+`PERS_REAP_END_DATE` (+ `_SRC`, `_RSN_CODE`), `FYE`, `ETL_LOAD_DATE`. One row
+per person per fiscal year, so DOB and SEX are taken as one value per PHN and
+conflicts across years are counted (block 5).
 
 ## Working source decisions (provisional, pending blocks 5-6)
 - **DOB primary:** Strata `patient.BIRTH_DATE` (covers waitlisted and placed
   alike); fallback Registry `BIRTH_DT`; `DEMOGRAPHIC_SOURCE` records which.
   Agreement between the two is to be measured before either is trusted.
-- **Sex/gender:** Strata `GENDER` is unusable. Candidate: Registry (column
-  pending) or Epic `PATIENT.SEX_C` (sensitivity source; would need approval to
-  promote a demographic from it). If neither is usable, the field is reported
-  as unavailable, not imputed.
+- **Sex/gender primary: Registry `SEX`** (F/M). Strata `GENDER` is null; Epic
+  is not used for a production demographic. No fallback: where the registry
+  has no row the field is missing and counted as such.
 - **Origin:** waitlist `CURRENT_LOCATION` at the census row nearest
   `DEMAND_DT`; `SOURCE_LOCATION` for admission-only events. Confirmed columns.
 - **Requested facility:** `SERVICE_PROVIDER_RATED_SITE` + `RATING` + `CARE_TYPE`
