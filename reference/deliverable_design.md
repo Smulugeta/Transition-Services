@@ -66,7 +66,7 @@ spells in all. The fix is conceptual and touches no cohort.
 | 7 | DOB: exact two-of-three consensus, QA flag/source kept | done: consensus Strata+Registry+Epic 928, Strata+Epic 44, Registry+Epic 14, Strata single 2, no consensus 1 (Strata kept); median age 83 and bands unchanged |
 | 8 | Origin at entry kept; sub-acute folded into Acute Care | done (detail retained) |
 | 9 | Placement-site completeness on the placed denominator | done |
-| 10 | 39 vs 40 outside-universe Cochrane events | distinct labels: 39 people have no attribute record at all; the 40th is the April-2020 carry-in person present in the QA table |
+| 10 | 39 vs 40 outside-universe Cochrane events | resolved with distinct labels. The earlier "40" folded in the X4 person (in incident scope, unlabelled at the time). Final: 344 Cochrane-site admissions = 237 first placements of A/B + 29 incident-scope X1–X4 + 24 later moves of C people + 15 later moves of A/B people + 39 people outside incident demand (21 in prior residential care before FY2022, 18 with earlier or non-new demand). Neither April-2020 carry-in person has a Cochrane-site admission |
 | 11 | `Z1Z1Z1` must not establish residency | **done, sql/09 rev 2.10 + sql/14 + sql/18**: the non-Alberta branch requires a syntactically valid, non-dummy Canadian postal code. sql/14 re-run 2026-09-03 17:04: the Z1Z1Z1 person is now UNRESOLVED (X2 → X3); A/B/C/D 89/148/192/69 unchanged; the QA population gains one row (a second invalid-code person whose residency became unresolved and is therefore Cochrane-facing). All 35 gates pass |
 
 ### Populations after the sql/18 run (2026-09-03 17:29, final pre-check)
