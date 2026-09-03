@@ -7,12 +7,14 @@ Everything here is reproducible from the SQL extracts and the two analysis
 scripts. Every published figure traces to a numbered block in
 `sql/01_demand_capacity_report.sql`.
 
-> **Status (2026-09-02, sign-off).** Production headline **accepted
+> **Status (2026-09-03).** Production headline (rev 2.7) **accepted
 > mechanically by the reviewer**; sign-off record in
-> `reference/signoff_2026-09-02.md`. Rev 2.8 hardening (building-level
-> facility guard, Strata CONFLICT blocks classification on both anchors,
-> registry PHN validated before padding) is written and does not change the
-> headline.
+> `reference/signoff_2026-09-02.md`. **Rev 2.8.3 was rejected**: its
+> occupancy-based building guard excluded a residential condominium and
+> mis-parsed numbered streets (production 349, D range 69–119). **Rev 2.9**
+> removes every occupancy-based exclusion from the residency hierarchy;
+> occupancy and building normalisation are audit / QA flags only. Awaiting
+> the rev 2.9 run to confirm the headline returns to 89/148/192/69.
 >
 > Earlier status, rev 2.7 run — all seven gates closed: Definitions:
 > *new Type A/B demand arising FY2022–FY2026*; residency = registry latest

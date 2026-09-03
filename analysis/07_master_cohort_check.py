@@ -2,6 +2,20 @@
 """
 Validate and tabulate the master demand cohort (output of sql/09, rev 2.3).
 
+Revision 9 (seventh review: occupancy is an audit flag, not an exclusion):
+  - No occupancy-based facility exclusion may reach STRATA_RESIDENCY,
+    STRATA_RESIDENCY_ALT or EPIC_RESIDENCY (rev 2.9 extracts): integrity
+    failure if any verdict reads 'NOT USED - facility address'.
+  - G4 becomes an OCCUPANCY AUDIT: every production Strata resolution whose
+    exact address holds >= 3 concurrent patients, or matches a NAMED
+    Cochrane-area continuing-care site (candidate reference, flag only), is
+    listed with its cohort for ALA validation; the cohort effect of blocking
+    them is shown as a sensitivity, never applied.
+  - Building normalisation (…_QA columns) is reported as QA only; the key
+    mirror protects numbered streets ("403-8402 142 STREET" keeps 8402).
+  - --baseline <rev 2.7 export>: per-person cohort transition matrix against
+    the accepted production run, with a reason for every move.
+
 Revision 8 (production hardening, sixth review):
   - Building-level facility guard reported for Strata and Epic
     (…_BUILDING_CONCURRENT_N); Epic Town verdicts tabulated by building
@@ -79,7 +93,7 @@ Revision 3 after third review:
 A clean run is a data-integrity result. It is NOT a methodological sign-off.
 
 USAGE
-    python3 07_master_cohort_check.py master.csv [--published client_level.csv]
+    python3 07_master_cohort_check.py master.csv [--published client_level.csv] [--baseline rev27_master.csv]
 """
 import csv, sys, argparse, datetime as dt, statistics as st
 from collections import Counter, defaultdict
@@ -157,6 +171,7 @@ def integrity(rows):
     print("1. INTEGRITY — the script stops if any of these fail")
     n = len(rows)
     has_any3 = "COHORT_ANY3" in rows[0]; has_b24 = "B_CATCHMENT" in rows[0]; has_25 = "RESIDENCY_FINAL" in rows[0]
+    has_29 = "STRATA_OCCUPANCY_FLAG" in rows[0]
     # which rule did the SQL use for COHORT?  rev>=2.5: residency_final + non-Town B;
     # rev 2.4: latest + non-Town B; rev 2.3: latest + non-area B; earlier: any3 + non-area B
     if has_25:    expect = lambda r: r["_coh"]
@@ -191,8 +206,11 @@ def integrity(rows):
                                                sum(1 for r in rows if r["_src"]=="STRATA_ADDRESS_H" and r["_resL"]!=UNRES)),
         ("Strata address effective AFTER the demand date used (rule 8)",
                                                sum(1 for r in rows if r["_src"]=="STRATA_ADDRESS_H" and r["_seff"] and r["_seff"] > r["_dem"])),
-        ("facility address used to classify residency",
-                                               sum(1 for r in rows if r["_src"]=="STRATA_ADDRESS_H" and col(r,"STRATA_ADDRESS_IS_FACILITY","0")=="1")),
+        ("facility address used to classify residency (pre rev 2.9 guard)",
+                                               sum(1 for r in rows if not has_29 and r["_src"]=="STRATA_ADDRESS_H" and col(r,"STRATA_ADDRESS_IS_FACILITY","0")=="1")),
+        ("occupancy-based exclusion reached a residency verdict (rev 2.9: audit flag only)",
+                                               sum(1 for r in rows if has_29 and any((col(r,k) or "").startswith("NOT USED - facility")
+                                                   for k in ("STRATA_RESIDENCY","STRATA_RESIDENCY_ALT","EPIC_RESIDENCY")))),
         ("residency_final not in {registry verdict, strata verdict, UNRESOLVED}",
                                                sum(1 for r in rows if has_25 and r["_resFin"] not in (r["_resL"], r["_strat"] or "", UNRES))),
         ("SQL COHORT_ALT disagrees with recomputed alt cohort (G1)",
@@ -289,6 +307,8 @@ def strata(rows):
     rem = [r for r in prev if r["_src"]!="STRATA_ADDRESS_H"]
     def cls(r):
         if col(r,"STRATA_ADDRESS_IS_FACILITY","0")=="1":            return "facility address at demand (shared by 3+ people) — not used"
+        if col(r,"STRATA_ADDRESS_IS_PLACEHOLDER","0")=="1":         return "placeholder address (NO FIXED ADDRESS …) — not used"
+        if (r["_strat"] or "").startswith("CONFLICT"):              return "active address versions disagree — CONFLICT, not classified"
         if r["_strat"]==UNRES and col(r,"STRATA_POSTAL_CODE_AT_DEMAND"): return "Alberta postal code at demand fails the geography lookup"
         if r["_strat"]==UNRES:                                        return "address at demand but no postal code"
         if col(r,"STRATA_HISTORICAL_POSTAL_CODE"):                    return "no address active at demand; older address only (rule 9)"
@@ -298,9 +318,15 @@ def strata(rows):
     for k, v in part.most_common(): print(f"     {k:66s} {v:5,}")
     ys = sorted(int(col(r,"STRATA_HISTORICAL_YEARS_BEFORE_DEMAND")) for r in rem if cls(r).startswith("no address active"))
     if ys: print(f"       rule-9 staleness: {min(ys)}-{max(ys)} years before demand, median {st.median(ys)}")
-    # the Cochrane resolutions must be private homes, never a facility under the threshold
     coch = [r for r in res if r["_resFin"] in (TOWN, AREA)]
-    if coch:
+    if coch and "STRATA_OCCUPANCY_FLAG" in rows[0]:
+        key = "STRATA_ADDRESS_CONCURRENT_N"
+        sb = Counter(min(int(col(r,key,"1") or 1), 5) for r in coch)
+        fl = sum(1 for r in coch if col(r,"STRATA_OCCUPANCY_FLAG","0")=="1")
+        nf = sum(1 for r in coch if col(r,"STRATA_NAMED_FACILITY_CANDIDATE","0")=="1")
+        print(f"   Strata resolutions TO Cochrane/catchment: {len(coch):,}; concurrent occupants at the exact address: {dict(sorted(sb.items()))} (5 = 5+)")
+        print(f"     occupancy flag (>= 3, AUDIT ONLY, used as resident): {fl:,};  named-facility candidate (flag only): {nf:,}  -> see G4")
+    elif coch:
         sb = Counter(col(r,"STRATA_ADDRESS_SHARED_BY_N") for r in coch)
         print(f"   Strata resolutions TO Cochrane/catchment: {len(coch):,}; address shared by N people: {dict(sb)}  (all must be 1)")
     oop = sum(1 for r in res if col(r,"STRATA_POSTAL_CODE_AT_DEMAND") and not col(r,"STRATA_POSTAL_CODE_AT_DEMAND").startswith("T"))
@@ -359,9 +385,39 @@ def gate3(rows):
     ok = r["_resL"]==UNRES and r["_src"]=="STRATA_ADDRESS_H" and r["_resFin"]==NOT
     print(f"   residency_source {r['_src']}   residency_final {r['_resFin']}   {'PROVEN' if ok else 'FAILS'}\n")
 
-# ── G4. facility audit ──────────────────────────────────────────────────────
+# ── G4. occupancy audit (rev 2.9: flag only) / facility guard (pre 2.9) ────
 def gate4(rows):
-    print("G4. FACILITY GUARD AUDIT")
+    if "STRATA_OCCUPANCY_FLAG" not in rows[0]:
+        return gate4_legacy(rows)
+    print("G4. OCCUPANCY AUDIT — flags only; nothing here changes a verdict (rev 2.9)")
+    used = [r for r in rows if r["_src"]=="STRATA_ADDRESS_H" and r["_inw"] and r["_app"] and r["_valid"]]
+    key = "STRATA_ADDRESS_CONCURRENT_N"
+    dist = Counter(min(int(col(r,key,"1") or 1), 5) for r in used)
+    print(f"   production Strata resolutions (approved, valid, in window): {len(used):,}; exact-address concurrent occupants: {dict(sorted(dist.items()))} (5 = 5+)")
+    flagged = [r for r in used if col(r,"STRATA_OCCUPANCY_FLAG","0")=="1" or col(r,"STRATA_NAMED_FACILITY_CANDIDATE","0")=="1"]
+    print(f"   flagged for ALA validation (exact occupancy >= 3 OR named-facility candidate): {len(flagged):,}")
+    print(f"   {'n':>3} {'named':>5}  {'address':38s} {'city':14s} {'postal':7s} verdict / cohort")
+    for r in sorted(flagged, key=lambda x: (-int(col(x,key,"1") or 1), col(x,"STRATA_ADDRESS_AT_DEMAND"))):
+        print(f"   {col(r,key,'1'):>3} {col(r,'STRATA_NAMED_FACILITY_CANDIDATE','0'):>5}  {col(r,'STRATA_ADDRESS_AT_DEMAND')[:38]:38s} "
+              f"{col(r,'STRATA_CITY_AT_DEMAND')[:14]:14s} {col(r,'STRATA_POSTAL_CODE_AT_DEMAND'):7s} {r['_resFin'][:20]} / {r['_coh'] or '-'}")
+    # sensitivity: what blocking each flag class WOULD do — reported, never applied
+    for lab, pred in (("exact occupancy >= 3", lambda r: col(r,"STRATA_OCCUPANCY_FLAG","0")=="1"),
+                      ("named-facility candidate", lambda r: col(r,"STRATA_NAMED_FACILITY_CANDIDATE","0")=="1"),
+                      ("building occupancy >= 3 (QA key, unvalidated)", lambda r: col(r,"STRATA_BUILDING_OCCUPANCY_FLAG_QA","0")=="1")):
+        hit = [r for r in used if pred(r)]
+        lost = Counter(r["_coh"] for r in hit if r["_coh"])
+        print(f"   if '{lab}' were an exclusion: {len(hit):,} resolutions would drop to UNRESOLVED; cohort members lost: "
+              + (", ".join(f"{k} {v}" for k, v in sorted(lost.items())) or "none") + "  [sensitivity, NOT applied]")
+    bq = Counter(min(int(col(r,"STRATA_BUILDING_CONCURRENT_N_QA","1") or 1), 5) for r in used)
+    print(f"   QA — building-normalised concurrent occupants (key unvalidated; numbered streets protected): {dict(sorted(bq.items()))}")
+    ex = next((r for r in rows if r["_phn"]=="944904381"), None)
+    if ex:
+        print(f"   reviewer case …4381 (107 1000 Glenhaven Way): strata '{col(ex,'STRATA_ADDRESS_AT_DEMAND')}' {col(ex,'STRATA_POSTAL_CODE_AT_DEMAND')} "
+              f"exact n={col(ex,key,'1')} building n={col(ex,'STRATA_BUILDING_CONCURRENT_N_QA','-')} -> {ex['_strat']} ; residency_final {ex['_resFin']} ; cohort {ex['_coh'] or '-'}")
+    print( "   A facility reference table confirmed by ALA is the only basis on which any of these addresses may be excluded.\n")
+
+def gate4_legacy(rows):
+    print("G4. FACILITY GUARD AUDIT (pre rev 2.9 extract: the guard still blocks here)")
     prev = [r for r in rows if r["_resL"]==UNRES]
     fac = [r for r in prev if col(r,"STRATA_ADDRESS_IS_FACILITY","0")=="1"]
     key = "STRATA_ADDRESS_CONCURRENT_N" if "STRATA_ADDRESS_CONCURRENT_N" in rows[0] else "STRATA_ADDRESS_SHARED_BY_N"
@@ -397,17 +453,23 @@ def epic(rows):
     multi = [r for r in inw if int(col(r,"EPIC_N_ACTIVE_AT_DEMAND","0") or 0) > 1]
     dis = [r for r in multi if col(r,"EPIC_CLASSES_DISAGREE","0")=="1"]
     print(f"   check 5 — of {len(multi):,} with multiple actives, class CONFLICT (not chosen): {len(dis):,}")
-    guards = Counter(("facility" if col(r,"EPIC_IS_FACILITY","0")=="1" else "PO Box" if col(r,"EPIC_IS_POBOX","0")=="1"
-                      else "placeholder" if col(r,"EPIC_IS_PLACEHOLDER","0")=="1" else None) for r in inw if r["_epic"])
+    r29 = "EPIC_OCCUPANCY_FLAG" in rows[0]
+    guards = Counter(("PO Box" if col(r,"EPIC_IS_POBOX","0")=="1" else "placeholder" if col(r,"EPIC_IS_PLACEHOLDER","0")=="1"
+                      else None if r29 else "facility" if col(r,"EPIC_IS_FACILITY","0")=="1" else None) for r in inw if r["_epic"])
     guards.pop(None, None)
-    basis = "BUILDING level (rev 2.8)" if "EPIC_BUILDING_CONCURRENT_N" in rows[0] else "EXACT address string (pre rev 2.8 — misses multi-unit facilities such as 50 Grande Ave)"
-    print(f"   check 7 — Epic rows not used because facility / PO Box / placeholder: {dict(guards)}   guard basis: {basis}")
+    if r29:
+        occ = sum(1 for r in inw if col(r,"EPIC_OCCUPANCY_FLAG","0")=="1"); nf = sum(1 for r in inw if col(r,"EPIC_NAMED_FACILITY_CANDIDATE","0")=="1")
+        print(f"   check 7 — Epic rows not used because PO Box / placeholder: {dict(guards)};  occupancy >= 3 flag {occ:,} and named-facility candidate {nf:,} are AUDIT ONLY (used)")
+    else:
+        basis = "BUILDING level (rev 2.8)" if "EPIC_BUILDING_CONCURRENT_N" in rows[0] else "EXACT address string (pre rev 2.8)"
+        print(f"   check 7 — Epic rows not used because facility / PO Box / placeholder: {dict(guards)}   guard basis: {basis}")
     import re as _re
     def bkey(x):
-        # mirrors the POSIX-ERE chain in sql/09 rev 2.8.3 exactly (no \b, no lookahead)
+        # mirrors the POSIX-ERE chain in sql/09 rev 2.9 exactly (no \b, no lookahead; numbered streets protected). QA ONLY.
         u = (x or "").upper()
         for pat, rep in (
             (r"[#,.]", " "),
+            (r"([0-9]+)\s+(STREET|ST|AVENUE|AVE|AV|ROAD|RD|DRIVE|DR|BOULEVARD|BLVD|WAY|CRESCENT|CRES|TRAIL|TR|HIGHWAY|HWY)($|[^A-Z])", r"\1~\2\3"),
             (r"(^|[^A-Z])(UNIT|APT|APARTMENT|SUITE|STE|RM|ROOM)\s*[A-Z]?[0-9]+[A-Z]?", r"\1 "),
             (r"(^|[^A-Z])(BSMT|BASEMENT)([^A-Z]|$)", r"\1 \3"),
             (r"(^|[^A-Z])(LOWER|UPPER|MAIN)\s+(FLOOR|FLR|LEVEL)([^A-Z]|$)", r"\1 \4"),
@@ -421,6 +483,7 @@ def epic(rows):
             (r"(^|[^A-Z])ROAD($|[^A-Z])", r"\1RD\2"),
             (r"(^|[^A-Z])CRESCENT($|[^A-Z])", r"\1CRES\2"),
             (r"(^|[^A-Z])BOULEVARD($|[^A-Z])", r"\1BLVD\2"),
+            (r"~", " "),
         ):
             u = _re.sub(pat, rep, u)
         return u.strip()
@@ -429,14 +492,14 @@ def epic(rows):
         if col(r,"EPIC_ADDRESS_AT_DEMAND"): bocc[(bkey(col(r,"EPIC_ADDRESS_AT_DEMAND")), col(r,"EPIC_ZIP_AT_DEMAND"))].add(r["_phn"])
     et = [r for r in inw if r["_epic"] in (TOWN, AREA)]
     def bn(r):
-        v = col(r,"EPIC_BUILDING_CONCURRENT_N")
+        v = col(r,"EPIC_BUILDING_CONCURRENT_N_QA") or col(r,"EPIC_BUILDING_CONCURRENT_N")
         return int(v) if v else len(bocc[(bkey(col(r,"EPIC_ADDRESS_AT_DEMAND")), col(r,"EPIC_ZIP_AT_DEMAND"))])
     dist = Counter(min(bn(r), 5) for r in et)
     print(f"   Epic Town/catchment verdicts {len(et):,}; occupants of their BUILDING: {dict(sorted(dist.items()))} (5 = 5+)"
-          + ("" if "EPIC_BUILDING_CONCURRENT_N" in rows[0] else "  [within-cohort lower bound]"))
+          + ("" if ("EPIC_BUILDING_CONCURRENT_N" in rows[0] or "EPIC_BUILDING_CONCURRENT_N_QA" in rows[0]) else "  [within-cohort lower bound]"))
     big = Counter((bkey(col(r,"EPIC_ADDRESS_AT_DEMAND")), col(r,"EPIC_ZIP_AT_DEMAND")) for r in et if bn(r) >= 3)
     for k, v in big.most_common(6): print(f"     {v:3d} in {k[0][:32]:32s} {k[1]}")
-    print(f"   Epic Town verdicts in a building with 3+ occupants: {sum(big.values()):,} of {len(et):,} — facility contamination")
+    print(f"   Epic Town verdicts in a building with 3+ occupants (QA key, unvalidated): {sum(big.values()):,} of {len(et):,} — audit list, not an exclusion")
     # check 8: agreement with Registry where Registry is known
     known = [r for r in inw if r["_resL"] != UNRES and r["_epic"] in (TOWN, AREA, NOT)]
     t = lambda x: "Town" if x == TOWN else "non-Town"
@@ -453,8 +516,8 @@ def epic(rows):
     for k in (TOWN, AREA, NOT, "still unresolved"): print(f"     {k:36s} {er[k]:4,}")
     # check 11: sensitivity cohort
     cP = Counter(r["_coh"] for r in rows if r["_coh"]); cE = Counter(r["_cohE"] for r in rows if r["_cohE"])
-    print(f"   check 11 — SENSITIVITY cohort (registry -> Strata -> Epic), NOT the headline. An exact-address guard can")
-    print(f"              miss multi-unit facilities such as 50 Grande Ave; the building-level guard (rev 2.8) corrects that.")
+    print(f"   check 11 — SENSITIVITY cohort (registry -> Strata -> Epic), NOT the headline.")
+    print(f"              rev 2.9: no occupancy-based exclusion; facility contamination is audited above, not removed.")
     print(f"     {'cohort':8s} {'production':>11} {'with Epic':>10} {'diff':>6}")
     for k in ("A","B","C","D"): print(f"     {k:8s} {cP[k]:11,} {cE[k]:10,} {cE[k]-cP[k]:+6,}")
     # control
@@ -473,6 +536,7 @@ def remaining(rows):
     print(f"REMAINING UNRESOLVED, APPROVED, UNPLACED — {len(rem):,} people (PHN masked)")
     for r in sorted(rem, key=lambda x: x["_dem"]):
         st_ = ("placeholder" if col(r,"STRATA_ADDRESS_IS_PLACEHOLDER","0")=="1" else "facility" if col(r,"STRATA_ADDRESS_IS_FACILITY","0")=="1"
+               else "CONFLICT" if (r["_strat"] or "").startswith("CONFLICT")
                else "no postal" if col(r,"STRATA_ADDRESS_AT_DEMAND") and not col(r,"STRATA_POSTAL_CODE_AT_DEMAND")
                else "no strata row" if not col(r,"STRATA_ADDRESS_AT_DEMAND") else "unmapped T-code")
         print(f"   …{r['_phn'][-4:]}  demand {r['_dem']}  registry: {col(r,'RESIDENCY_MISSING_REASON')[:36]:36s} strata: {st_:13s} {r['_dcls'][:2] or '-'}")
@@ -578,15 +642,46 @@ def reconcile(rows, pub_path, cP):
     for (a,b,why),v in sorted(reasons.items(), key=lambda x:-x[1]): print(f"     {a} -> {b:7s} {v:4,}  {why}")
     print()
 
+# ── baseline: per-person transition against the accepted production run ────
+def baseline(rows, path):
+    base = {r["_phn"]: r for r in load(path) if r["_phn"]}
+    cur  = {r["_phn"]: r for r in rows if r["_phn"]}
+    print(f"BASELINE COMPARISON — {path}")
+    cB = Counter(r["_coh"] for r in base.values() if r["_coh"]); cC = Counter(r["_coh"] for r in cur.values() if r["_coh"])
+    print(f"   {'cohort':8s} {'baseline':>9} {'this run':>9} {'diff':>6}")
+    for k in ("A","B","C","D"): print(f"   {k:8s} {cB[k]:9,} {cC[k]:9,} {cC[k]-cB[k]:+6,}")
+    rb = cB["A"]+cB["C"]+cB["D"]; rc = cC["A"]+cC["C"]+cC["D"]
+    print(f"   {'A+C+D':8s} {rb:9,} {rc:9,} {rc-rb:+6,}")
+    print(f"   people: baseline {len(base):,}  this run {len(cur):,}  only in baseline {len(set(base)-set(cur)):,}  only in this run {len(set(cur)-set(base)):,}")
+    labs = ["A","B","C","D","none"]
+    M = defaultdict(Counter)
+    for p_ in set(base)|set(cur):
+        b = base[p_]["_coh"] if p_ in base else "absent"; c = cur[p_]["_coh"] if p_ in cur else "absent"
+        M[b or "none"][c or "none"] += 1
+    rows_ = [l for l in labs+["absent"] if M.get(l)]; cols_ = [l for l in labs+["absent"] if any(M[r_][l] for r_ in rows_)]
+    print(f"   {'baseline / this run':22s}" + "".join(f"{c:>8}" for c in cols_) + f"{'TOTAL':>8}")
+    for r_ in rows_: print(f"   {r_:22s}" + "".join(f"{M[r_][c]:8,}" for c in cols_) + f"{sum(M[r_].values()):8,}")
+    moved = [(p_, base[p_], cur[p_]) for p_ in set(base)&set(cur) if (base[p_]["_coh"] or None) != (cur[p_]["_coh"] or None)]
+    print(f"   cohort moves among people present in both: {len(moved):,}")
+    for p_, b, c in sorted(moved, key=lambda x: x[0]):
+        print(f"     …{p_[-4:]}  {b['_coh'] or '-'} -> {c['_coh'] or '-'}   residency {b['_resFin']} [{b['_src']}] -> {c['_resFin']} [{c['_src']}]"
+              f"   strata '{col(c,'STRATA_ADDRESS_AT_DEMAND')[:30]}' {col(c,'STRATA_POSTAL_CODE_AT_DEMAND')}"
+              f"   was: {b['_strat'] or '-'}  now: {c['_strat'] or '-'}")
+    un = lambda d: sum(1 for r in d.values() if r["_resFin"]==UNRES and r["_app"] and not r["_pl"] and r["_valid"] and r["_inw"])
+    print(f"   unresolved, approved, unplaced (valid, in window): baseline {un(base):,}  this run {un(cur):,}")
+    sres = lambda d: sum(1 for r in d.values() if r["_src"]=="STRATA_ADDRESS_H")
+    print(f"   Strata-resolved residencies: baseline {sres(base):,}  this run {sres(cur):,}\n")
+
 def main(a):
     rows = load(a.master_csv)
     print(f"\n{a.master_csv}\n{len(rows):,} people in the audit universe\n")
     if not integrity(rows): sys.exit("INTEGRITY CHECKS FAILED — nothing else is printed. Fix the query first.")
     cP = cohorts(rows); uncertainty(rows, cP); strata(rows); evidence(rows); methods(rows); year_waits(rows)
     gate1(rows); gate2(rows); gate3(rows); gate4(rows); epic(rows); remaining(rows); final_table(rows)
+    if a.baseline: baseline(rows, a.baseline)
     if a.published: reconcile(rows, a.published, cP)
     print("A clean run is a data-integrity result, not a methodological sign-off.")
 
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser(); ap.add_argument("master_csv"); ap.add_argument("--published")
+    ap = argparse.ArgumentParser(); ap.add_argument("master_csv"); ap.add_argument("--published"); ap.add_argument("--baseline")
     main(ap.parse_args())

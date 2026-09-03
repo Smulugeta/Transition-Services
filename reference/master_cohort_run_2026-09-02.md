@@ -362,3 +362,54 @@ count moves from 99 to 100 of 360 Epic Town verdicts in a 3+ occupant building.
 
 Expected on the 2.8.3 run: production unchanged at 89 / 148 / 192 / 69; Epic
 sensitivity close to 89 / 149 / 193 / 69 (lower bound from within-cohort keys).
+
+## Rev 2.8.3 — REJECTED by the reviewer (2026-09-03)
+
+Independent comparison against rev 2.7:
+
+| | Rev 2.7 (accepted) | Rev 2.8.3 |
+|---|---|---|
+| A / B / C / D | 89 / 148 / 192 / 69 | 89 / 148 / **191** / 69 |
+| Resident demand | 350 | 349 |
+| Strata residencies resolved → UNRESOLVED | — | 172 |
+| Unresolved, approved, unplaced | 11 | 50 (41 blocked as "facility") |
+| Crude D range | 69–80 | 69–119 |
+
+The lost C client (PHN …4381): registry unresolved; Strata address at demand
+`107 1000 Glenhaven Way, Cochrane T4C 1Y9`; blocked because the normalised
+building held 16 concurrent patients. Town of Cochrane property records
+identify 1000 Glenhaven Way as residential condominium / single-family units.
+False-positive facility guard.
+
+Numbered-street parsing defect in the building key: `403-8402 142 STREET` →
+`142 ST`, `1206-15503 87 AVENUE NW` → `87 AVE NW`, and so on — the civic number
+was stripped as if it were a unit number, so unrelated homes on numbered
+streets merged into one "building".
+
+Reviewer's required change: occupancy alone never determines a facility;
+replace the exclusion with a known facility-address reference table; until
+one exists, occupancy is an audit flag only; building normalisation QA only.
+
+## Rev 2.9 — occupancy is an audit flag, not an exclusion (written; not yet run)
+
+- No occupancy-based exclusion in `strata_residency`, `strata_residency_alt`
+  or `epic_residency`. Remaining blocks: placeholder address, PO Box (Epic),
+  CONFLICT between active versions.
+- Reported, never applied: `strata_occupancy_flag` (exact address ≥ 3
+  concurrent on the demand date), `strata_building_occupancy_flag_qa`,
+  `strata_building_key_qa`, `strata_building_concurrent_n_qa`,
+  `strata_civic_concurrent_n_qa`, and the Epic equivalents.
+- `strata_named_facility_candidate` / `epic_named_facility_candidate`: the
+  address matches a named Cochrane-area continuing-care site from
+  `reference/cochrane_address_lookup.csv`. Flag for validation only.
+- Numbered streets protected in the QA key before any leading number is
+  treated as a unit: `403-8402 142 STREET` → `8402 142 ST`;
+  `322 50 GRANDE AVE` → `50 GRANDE AVE`.
+- Checker rev 9: integrity failure if any residency verdict reads
+  `NOT USED - facility address`; G4 rewritten as an occupancy audit that lists
+  every flagged production resolution and shows the cohort effect of each
+  flag class as a sensitivity; `--baseline <rev 2.7 export>` prints the
+  per-person cohort transition matrix with a reason for every move.
+- Expected: 89/148/192/69 (350). The rev 2.7 exact-address guard blocked 28
+  addresses (27 not approved-and-unplaced; nearly all outside Cochrane); those
+  now resolve, so any move will appear in the baseline diff with its address.

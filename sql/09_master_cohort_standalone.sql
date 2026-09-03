@@ -1,6 +1,6 @@
 -- ============================================================================
 -- MASTER DEMAND COHORT — A / B / C / D — STANDALONE, ONE ROW PER PERSON
--- Revision 2.8.3: as 2.8, made Snowflake-clean (pre-aggregated joins, CTE order, POSIX-only regex). Paste-and-run.
+-- Revision 2.9: occupancy-based facility exclusion REMOVED from the production residency hierarchy (audit flag only). Paste-and-run.
 -- Feed the CSV to analysis/07_master_cohort_check.py.
 --
 -- WHAT CHANGED AND WHY (each item is a review finding)
@@ -88,6 +88,44 @@
 --     uncertainty around D; the maximum is primary D plus every valid
 --     unresolved approved-unplaced person.
 --
+-- REV 2.9 — SEVENTH REVIEW: OCCUPANCY IS AN AUDIT FLAG, NOT AN EXCLUSION
+--   The reviewer's independent run of rev 2.8.3 found a material regression:
+--   the building-level guard blocked 107 1000 Glenhaven Way (16 concurrent
+--   patients), which Town of Cochrane property records identify as
+--   residential condominium / single-family units, not a continuing-care
+--   facility. Production fell to 89/148/191/69 (349); 172 previously resolved
+--   Strata residencies became UNRESOLVED; unresolved approved-unplaced rose
+--   from 11 to 50 and the crude D range widened to 69-119. Numbered streets
+--   were also mis-parsed: "403-8402 142 STREET" lost its civic number 8402
+--   and collapsed to "142 ST", merging unrelated homes into one "building".
+--   Required change, implemented here:
+--   · NO occupancy-based exclusion anywhere in the residency hierarchy.
+--     strata_residency and strata_residency_alt are now: placeholder ->
+--     NOT USED; active versions disagree -> CONFLICT; else the postal-code
+--     class. The exact-address guard (rev 2.6/2.7) and the building guard
+--     (rev 2.8) are both withdrawn. epic_residency (sensitivity) follows the
+--     same principle: placeholder / PO Box / CONFLICT only.
+--   · Occupancy is reported, never applied: strata_occupancy_flag (exact
+--     address, concurrent >= occupancy_audit_threshold on the demand date),
+--     strata_building_occupancy_flag_qa and strata_building_key_qa (building
+--     normalisation, QA ONLY until independently validated), and the Epic
+--     equivalents. The checker lists every flagged address for ALA review.
+--   · strata_named_facility_candidate / epic_named_facility_candidate: the
+--     address matches a NAMED Cochrane-area continuing-care site from
+--     reference/cochrane_address_lookup.csv (Bethany Cochrane 32 Quigley Dr,
+--     Big Hill Lodge 98 Carolina Dr, Points West / Hawthorne 60 Fireside
+--     Gate, Evergreen Manor 300 Ross Ave, Alora 207 Sunset Dr). CANDIDATE
+--     ONLY: it is a flag for validation, it does not block. A facility
+--     reference table confirmed by ALA replaces it when available.
+--   · Numbered-street fix in the QA key: "<number> <STREET-TYPE>" is
+--     protected before the leading unit number is stripped, so
+--     "403-8402 142 STREET" -> "8402 142 ST" and "322 50 GRANDE AVE" ->
+--     "50 GRANDE AVE".
+--   Expected: production returns to the rev 2.7 headline, 89/148/192/69
+--   (350), unless one of the 28 addresses the rev 2.7 exact guard blocked
+--   now resolves; the checker's --baseline diff against the rev 2.7 export
+--   reports every person whose cohort moves, with the reason.
+--
 -- REV 2.8.1 / 2.8.2 / 2.8.3 — SNOWFLAKE COMPATIBILITY ONLY (no logic change)
 --   2.8.3: building-key regexes rewritten in POSIX ERE. Snowflake has no
 --   lookahead (?=) and \b is not guaranteed; word edges are now explicit
@@ -121,7 +159,7 @@
 --     concurrent occupancy is counted on BOTH the normalised street key and
 --     the (civic number, postal) pair - the latter catches spelling variants
 --     (50 GRANDE AVE / 50 GRAND AVE / 50 GRANDE BLVD, all T4C 2P6). An address
---     is a facility if EITHER count reaches facility_min_patients. The guard
+--     is a facility if EITHER count reaches occupancy_audit_threshold. The guard
 --     only ever blocks; it never classifies, so over-blocking is the safe
 --     direction. A confirmed facility reference table is still preferable.
 --   · CONFLICT BLOCKS STRATA. When the address versions active on the demand
@@ -145,7 +183,7 @@
 --   · If the active rows DISAGREE on Town / catchment / non-Town the verdict
 --     is 'CONFLICT' and nothing is chosen (reviewer instruction 5).
 --   · ZIP_HX through the same postal geography; never CITY_HX.
---   · Facility = concurrent occupancy >= facility_min_patients; PO Box and
+--   · Facility = concurrent occupancy >= occupancy_audit_threshold; PO Box and
 --     placeholder rows are never classified.
 --   · epic_start_is_migration_date flags a row that started 2019-08-16 or
 --     2019-08-17 - the Connect Care initial conversion, 4.7M rows, 17% of the
@@ -173,7 +211,7 @@
 --   G4 FACILITY GUARD IS NOW CONCURRENT OCCUPANCY. "Ever shared by 3+" over
 --      decades of address history blocked apartment units with three
 --      successive tenants (403-18 Hebert Road, 353-5149 Mullen Road). A
---      facility is now an address with facility_min_patients or more DISTINCT
+--      facility is now an address with occupancy_audit_threshold or more DISTINCT
 --      PEOPLE HOLDING IT ON THE SAME DAY (the demand date). Placeholder
 --      strings (NO FIXED ADDRESS, NWT EVACUEE, UNKNOWN …) are a separate
 --      class and never classified. A facility reference table would be
@@ -209,7 +247,7 @@
 --      or every address version arrives four times. See query 11.
 --   ADDITION B — FACILITY GUARD. 32 Quigley Dr (the Bethany Cochrane campus)
 --      appears in address_h as a residence. An address version shared by
---      facility_min_patients or more distinct patients is treated as a
+--      occupancy_audit_threshold or more distinct patients is treated as a
 --      facility and is NOT used to classify residency (a Cochrane facility
 --      would otherwise manufacture Town residents - the exact contamination
 --      the registry method exists to avoid). Reported, not silently dropped.
@@ -262,7 +300,10 @@ rep_care_type (care_type, care_stream) as (
         -- outcome in this window, so they stay in hist_care_type only.
 ),
 w as (
-    select 3                  as facility_min_patients,   -- ADDITION B threshold
+    select 3                  as occupancy_audit_threshold,   -- REV 2.9: reporting threshold only; never excludes
+           -- REV 2.9 named Cochrane-area continuing-care sites (candidate reference; flag only)
+           'BETHANY|BIG HILL LODGE|POINTS WEST|HAWTHORNE|EVERGREEN MANOR|ALORA|(^|[^0-9])(32 QUIGLEY|98 CAROLINA|60 FIRESIDE|300 ROSS|207 SUNSET)'
+                              as named_facility_pat,
            '2021-04-01'::date as win_start,
            '2026-04-01'::date as win_end,           -- half-open
            '2026-03-31'::date as follow_up_end
@@ -522,10 +563,11 @@ strata_addr as (
 strata_placeholder (pat) as (
     select * from values ('%NO FIXED%'),('%NFA%'),('%EVACUEE%'),('%UNKNOWN%'),('%HOMELESS%'),('%SHELTER%'),('%TRANSIENT%')
 ),
-strata_addr_k as (
+strata_addr_k as (   -- REV 2.9: QA key only; numbered streets protected
     select a.*,
-           trim(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(upper(a.street_address),
+           trim(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(upper(a.street_address),
              '[#,.]', ' '),
+             '([0-9]+)\\s+(STREET|ST|AVENUE|AVE|AV|ROAD|RD|DRIVE|DR|BOULEVARD|BLVD|WAY|CRESCENT|CRES|TRAIL|TR|HIGHWAY|HWY)($|[^A-Z])', '\\1~\\2\\3'),
              '(^|[^A-Z])(UNIT|APT|APARTMENT|SUITE|STE|RM|ROOM)\\s*[A-Z]?[0-9]+[A-Z]?', '\\1 '),
              '(^|[^A-Z])(BSMT|BASEMENT)([^A-Z]|$)', '\\1 \\3'),
              '(^|[^A-Z])(LOWER|UPPER|MAIN)\\s+(FLOOR|FLR|LEVEL)([^A-Z]|$)', '\\1 \\4'),
@@ -538,14 +580,18 @@ strata_addr_k as (
              '(^|[^A-Z])DRIVE($|[^A-Z])', '\\1DR\\2'),
              '(^|[^A-Z])ROAD($|[^A-Z])', '\\1RD\\2'),
              '(^|[^A-Z])CRESCENT($|[^A-Z])', '\\1CRES\\2'),
-             '(^|[^A-Z])BOULEVARD($|[^A-Z])', '\\1BLVD\\2')) as bldg_key
+             '(^|[^A-Z])BOULEVARD($|[^A-Z])', '\\1BLVD\\2'),
+             '~', ' ')) as bldg_key
     from strata_addr a
 ),
 strata_addr_b as (
     select k.*,
            regexp_substr(k.bldg_key, '^[0-9]+')                              as civic,
-           iff(sp.pat is not null, 1, 0)                                      as is_placeholder
+           iff(sp.pat is not null, 1, 0)                                      as is_placeholder,
+           iff(regexp_substr(upper(k.street_address), w.named_facility_pat) is not null, 1, 0)
+                                                                              as named_facility_candidate   -- REV 2.9 flag only
     from strata_addr_k k
+    cross join w
     left join strata_placeholder sp on upper(k.street_address) like sp.pat
     qualify row_number() over (partition by k.phn, k.address_record_id, k.street_address, k.postal_norm,
                                             k.eff_from, k.eff_to order by sp.pat) = 1
@@ -563,7 +609,7 @@ strata_shared as (
 strata_active_base as (
     select hash(d.phn, a.address_record_id, a.street_address, a.postal_norm, a.eff_from, a.eff_to) as rk,
            d.phn, d.demand_dt, a.street_address, a.city_name, a.postal_norm, a.eff_from, a.eff_to, a.created,
-           a.is_placeholder, a.bldg_key, a.civic
+           a.is_placeholder, a.bldg_key, a.civic, a.named_facility_candidate
     from demand_in_window d
     join strata_addr_b a on a.phn = d.phn
                         and a.eff_from <= d.demand_dt
@@ -592,7 +638,7 @@ strata_conc_civic as (       -- REV 2.8: same civic number + postal (spelling va
 ),
 strata_active as (
     select s.rk, s.phn, s.demand_dt, s.street_address, s.city_name, s.postal_norm, s.eff_from, s.eff_to, s.created,
-           s.is_placeholder,
+           s.is_placeholder, s.named_facility_candidate,
            coalesce(ce.concurrent_n, 1)          as concurrent_n,
            coalesce(cb.building_concurrent_n, 1) as building_concurrent_n,
            coalesce(cc.civic_concurrent_n, 1)    as civic_concurrent_n,
@@ -652,7 +698,8 @@ strata_alt_summary as (
 ),
 strata_active_alt_base as (
     select hash(d.phn, a.address_record_id, a.street_address, a.postal_norm, a.eff_from, a.eff_to) as rk,
-           d.phn, d.demand_dt_alt, a.postal_norm, a.street_address, a.eff_from, a.is_placeholder, a.bldg_key, a.civic
+           d.phn, d.demand_dt_alt, a.postal_norm, a.street_address, a.eff_from, a.is_placeholder, a.bldg_key, a.civic,
+           a.named_facility_candidate
     from demand_in_window d
     join strata_addr_b a on a.phn = d.phn
                         and a.eff_from <= d.demand_dt_alt
@@ -680,7 +727,7 @@ strata_conc_civic_alt as (
     group by s.rk
 ),
 strata_at_demand_alt as (
-    select s.phn, s.postal_norm, s.street_address, ss.classes_disagree_alt, s.is_placeholder,
+    select s.phn, s.postal_norm, s.street_address, ss.classes_disagree_alt, s.is_placeholder, s.named_facility_candidate,
            coalesce(ce.concurrent_n, 1)          as concurrent_n,
            coalesce(cb.building_concurrent_n, 1) as building_concurrent_n,
            coalesce(cc.civic_concurrent_n, 1)    as civic_concurrent_n,
@@ -728,9 +775,12 @@ epic_addr as (
            a.eff_end_date::date                                    as eff_to,
            iff(upper(a.addr_hx_line1) like 'PO BOX%' or upper(a.addr_hx_line1) like 'P.O. BOX%'
                or upper(a.addr_hx_line1) like 'BOX %', 1, 0)        as is_pobox,
-           iff(sp.pat is not null, 1, 0)                            as is_placeholder
+           iff(sp.pat is not null, 1, 0)                            as is_placeholder,
+           iff(regexp_substr(upper(a.addr_hx_line1), w.named_facility_pat) is not null, 1, 0)
+                                                                    as named_facility_candidate   -- REV 2.9 flag only
     from db_source_epic_clarity.raw.pat_addr_chng_hx a
     join epic_phn e on e.pat_id = a.pat_id
+    cross join w
     left join strata_placeholder sp on upper(a.addr_hx_line1) like sp.pat
     where a.addr_hx_line1 is not null or a.zip_hx is not null
     -- one row per distinct (phn, address, dates); exact raw duplicates collapse here,
@@ -740,10 +790,11 @@ epic_addr as (
                                             a.eff_start_date::date, a.eff_end_date::date
                                order by sp.pat) = 1
 ),
-epic_addr_b as (
+epic_addr_b as (     -- REV 2.9: QA key only; numbered streets protected
     select a.*,
-           trim(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(upper(a.line1),
+           trim(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(upper(a.line1),
              '[#,.]', ' '),
+             '([0-9]+)\\s+(STREET|ST|AVENUE|AVE|AV|ROAD|RD|DRIVE|DR|BOULEVARD|BLVD|WAY|CRESCENT|CRES|TRAIL|TR|HIGHWAY|HWY)($|[^A-Z])', '\\1~\\2\\3'),
              '(^|[^A-Z])(UNIT|APT|APARTMENT|SUITE|STE|RM|ROOM)\\s*[A-Z]?[0-9]+[A-Z]?', '\\1 '),
              '(^|[^A-Z])(BSMT|BASEMENT)([^A-Z]|$)', '\\1 \\3'),
              '(^|[^A-Z])(LOWER|UPPER|MAIN)\\s+(FLOOR|FLR|LEVEL)([^A-Z]|$)', '\\1 \\4'),
@@ -756,14 +807,15 @@ epic_addr_b as (
              '(^|[^A-Z])DRIVE($|[^A-Z])', '\\1DR\\2'),
              '(^|[^A-Z])ROAD($|[^A-Z])', '\\1RD\\2'),
              '(^|[^A-Z])CRESCENT($|[^A-Z])', '\\1CRES\\2'),
-             '(^|[^A-Z])BOULEVARD($|[^A-Z])', '\\1BLVD\\2')) as bldg_key
+             '(^|[^A-Z])BOULEVARD($|[^A-Z])', '\\1BLVD\\2'),
+             '~', ' ')) as bldg_key
     from epic_addr a
 ),
 epic_addr_c as (select b.*, regexp_substr(b.bldg_key, '^[0-9]+') as civic from epic_addr_b b),
 epic_active_base as (
     select hash(d.phn, a.line1, a.postal_norm, a.eff_from, a.eff_to) as rk,
            d.phn, d.demand_dt, a.line1, a.city, a.postal_norm, a.eff_from, a.eff_to, a.is_pobox, a.is_placeholder,
-           a.bldg_key, a.civic,
+           a.bldg_key, a.civic, a.named_facility_candidate,
            iff(a.eff_from = m.max_start, 1, 0)                     as start_equals_source_max,
            iff(a.eff_from in ('2019-08-16'::date, '2019-08-17'::date), 1, 0) as start_is_migration_date
     from demand_in_window d
@@ -819,7 +871,9 @@ epic_summary as (
            count(distinct class_raw)                               as n_classes,
            iff(count(distinct class_raw) > 1, 1, 0)                as classes_disagree,
            max(is_pobox) as any_pobox, max(is_placeholder) as any_placeholder,
-           max(greatest(concurrent_n, building_concurrent_n, civic_concurrent_n)) as max_concurrent_any,
+           max(named_facility_candidate)                           as any_named_facility,       -- REV 2.9 flag only
+           max(concurrent_n)                                       as max_exact_concurrent_n,   -- REV 2.9 audit
+           max(greatest(building_concurrent_n, civic_concurrent_n)) as max_building_concurrent_any,  -- QA only
            max(building_concurrent_n)                              as max_building_concurrent_n,
            max(start_equals_source_max)                            as any_start_equals_source_max,
            max(start_is_migration_date)                            as any_start_is_migration_date,
@@ -827,13 +881,14 @@ epic_summary as (
     from epic_active group by phn
 ),
 epic_at_demand as (
-    select ea.*, es.n_active, es.classes_disagree, es.any_pobox, es.any_placeholder,
-           iff(es.max_concurrent_any >= w.facility_min_patients, 1, 0) as any_facility,   -- threshold applied here, no subquery
+    select ea.*, es.n_active, es.classes_disagree, es.any_pobox, es.any_placeholder, es.any_named_facility,
+           iff(es.max_exact_concurrent_n >= w.occupancy_audit_threshold, 1, 0)     as occupancy_flag,             -- REV 2.9 audit only
+           iff(es.max_building_concurrent_any >= w.occupancy_audit_threshold, 1, 0) as building_occupancy_flag_qa, -- REV 2.9 QA only
            es.any_start_equals_source_max, es.any_start_is_migration_date, es.max_building_concurrent_n,
-           -- reviewer instruction 5: never choose between conflicting classes
+           -- reviewer instruction 5: never choose between conflicting classes.
+           -- REV 2.9: no occupancy-based exclusion.
            case when es.any_placeholder = 1 then 'NOT USED - placeholder address'
                 when es.any_pobox = 1       then 'NOT USED - PO Box'
-                when es.max_concurrent_any >= w.facility_min_patients then 'NOT USED - facility address'
                 when es.classes_disagree = 1 then 'CONFLICT - active addresses disagree'
                 else es.class_if_unanimous end                       as epic_residency
     from epic_active ea join epic_summary es on es.phn = ea.phn
@@ -902,28 +957,26 @@ master as (
            sg.eff_from                                         as strata_effective_from,
            sg.shared_by_n                                      as strata_address_shared_by_n,       -- ever-shared, reporting only
            sg.concurrent_n                                     as strata_address_concurrent_n,      -- exact string, that day
-           sg.building_concurrent_n                            as strata_building_concurrent_n,     -- REV 2.8
-           sg.civic_concurrent_n                               as strata_civic_concurrent_n,        -- REV 2.8
-           sg.bldg_key                                         as strata_building_key,
-           iff(greatest(coalesce(sg.concurrent_n,0), coalesce(sg.building_concurrent_n,0),
-                        coalesce(sg.civic_concurrent_n,0)) >= w.facility_min_patients, 1, 0) as strata_address_is_facility,
+           sg.building_concurrent_n                            as strata_building_concurrent_n_qa,  -- REV 2.9: QA only
+           sg.civic_concurrent_n                               as strata_civic_concurrent_n_qa,     -- REV 2.9: QA only
+           sg.bldg_key                                         as strata_building_key_qa,           -- REV 2.9: QA only
+           -- REV 2.9: occupancy is REPORTED, never applied to the verdict
+           iff(coalesce(sg.concurrent_n,0) >= w.occupancy_audit_threshold, 1, 0)      as strata_occupancy_flag,
+           iff(greatest(coalesce(sg.building_concurrent_n,0), coalesce(sg.civic_concurrent_n,0))
+               >= w.occupancy_audit_threshold, 1, 0)                                   as strata_building_occupancy_flag_qa,
+           sg.named_facility_candidate                         as strata_named_facility_candidate,  -- REV 2.9: flag only
            sg.is_placeholder                                   as strata_address_is_placeholder,    -- G4
            sg.from_equals_creation                             as strata_from_equals_creation,
            sg.n_active                                         as strata_n_active_at_demand,        -- G2
            sg.classes_disagree                                 as strata_active_classes_disagree,   -- G2
+           -- REV 2.9: no occupancy-based exclusion
            case when sg.phn is null                                   then null
                 when sg.is_placeholder = 1                            then 'NOT USED - placeholder address'
-                when greatest(coalesce(sg.concurrent_n,0), coalesce(sg.building_concurrent_n,0),
-                              coalesce(sg.civic_concurrent_n,0)) >= w.facility_min_patients
-                                                                      then 'NOT USED - facility address'
                 when sg.classes_disagree = 1                          then 'CONFLICT - active addresses disagree'   -- REV 2.8: blocks
                 else sg.strata_residency_raw end                        as strata_residency,
            -- G1: Strata verdict at the alternative anchor
            case when sga.phn is null                                  then null
                 when sga.is_placeholder = 1                           then 'NOT USED - placeholder address'
-                when greatest(coalesce(sga.concurrent_n,0), coalesce(sga.building_concurrent_n,0),
-                              coalesce(sga.civic_concurrent_n,0)) >= w.facility_min_patients
-                                                                      then 'NOT USED - facility address'
                 when sga.classes_disagree_alt = 1                     then 'CONFLICT - active addresses disagree'   -- REV 2.8
                 else sga.class_raw end                                  as strata_residency_alt,
            sh.postal_norm                                      as strata_historical_postal_code,
@@ -935,9 +988,11 @@ master as (
            ep.eff_from                                         as epic_eff_start,
            ep.n_active                                         as epic_n_active_at_demand,
            ep.classes_disagree                                 as epic_classes_disagree,
-           ep.any_facility                                     as epic_is_facility,          -- building level from rev 2.8
-           ep.max_building_concurrent_n                        as epic_building_concurrent_n,
-           ep.bldg_key                                         as epic_building_key,
+           ep.occupancy_flag                                   as epic_occupancy_flag,              -- REV 2.9 audit only
+           ep.building_occupancy_flag_qa                       as epic_building_occupancy_flag_qa,  -- REV 2.9 QA only
+           ep.any_named_facility                               as epic_named_facility_candidate,    -- REV 2.9 flag only
+           ep.max_building_concurrent_n                        as epic_building_concurrent_n_qa,
+           ep.bldg_key                                         as epic_building_key_qa,
            ep.any_pobox                                        as epic_is_pobox,
            ep.any_placeholder                                  as epic_is_placeholder,
            ep.any_start_equals_source_max                      as epic_start_equals_source_max,
