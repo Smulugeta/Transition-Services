@@ -28,11 +28,23 @@ the final deliverable and records every decision that is still open.
 | Step | Artefact | State |
 |---|---|---|
 | 0 | `sql/13_enrichment_inventory.sql` — schemas, PHN↔PATIENT_ID multiplicity, origin vocabulary, placeholder addresses, rated sites, demographic completeness, community-name column | **written; awaiting results** |
-| 1 | `sql/14_deliverable_person.sql` — sql/09 rev 2.9 plus enrichment; classification CTE byte-identical; output = Cochrane-facing or Cochrane-rated people only, 57 named columns (no Epic, building, fallback or alt-anchor audit columns) | **written; awaiting run** |
+| 1 | `sql/14_deliverable_person.sql` — sql/09 rev 2.9 plus enrichment; classification CTE byte-identical; output = Cochrane-facing or Cochrane-rated people only, 51 named columns | **run 2026-09-03: 1,139 rows; 89/148/192/69 reproduced; 21 QA checks pass** |
 | 2 | `sql/15_deliverable_events.sql` — one row per qualifying Type A/B admission in the window, all people; builder scopes the views | **written; awaiting run** |
-| 3 | `analysis/08_deliverable_build.py` — STUDY_ID, QA assertions, four deliverable files, reviewer pre-check | **written; runs today on the rev 2.9 export** with every enrichment field reported as missing |
+| 3 | `analysis/08_deliverable_build.py` — STUDY_ID, QA assertions, four deliverable files, reviewer pre-check | **runs on the sql/14 export**; event views await sql/15 |
 | 4 | reviewer pre-check (the 12 items) | provisional version produced; final after steps 1–2 |
 | 5 | publish `COCHRANE_DEMAND_CONSULTANT`, `COCHRANE_PLACEMENT_ACTIVITY`, `COCHRANE_SUMMARY` | not before the reviewer clears step 4 |
+
+## Findings from the sql/14 run (2026-09-03)
+
+| Field | Result |
+|---|---|
+| DOB | 498 of 498, all from Strata patient. Registry also has 496; 466 agree exactly, 30 differ (25 by a month or less: the registry often carries the 15th of the month; 1 by a year; 1 by seven years, PHN …1030, D). Age band at demand depends on the source for 2 people. Strata stays primary; both values and the difference are in the internal file. |
+| Sex | 496 of 498 from the Registry (287 F, 209 M); the 2 missing have no registry row at all (both FY2026 entrants). No conflicts across registry years. |
+| Community | 498 of 498. All 350 Town residents map to COCHRANE (T) / local name COCHRANE \| SPRINGBANK; the 6 catchment residents to Rocky View County (MD); 3 non-Town people with out-of-province Strata postal codes are labelled "Outside Alberta (postal …)" because the verdict rested on the postal prefix, not a lookup. |
+| Origin | 498 of 498; 494 from the waitlist row nearest the demand date (477 on the demand date itself, 21 within 120 days after), 4 from the admission source for admission-only events. Only 13 differ from the first-appearance value used provisionally. |
+| Requested site | 401 of 498 rated at least one site (median 2 sites; up to 30). 97 have no rated site on any census row: reported as "(no site rated)", not imputed. Modal sites: Bethany Cochrane LTC 47, Hawthorne SL4 45, Hawthorne SL4D 24. |
+| PHN ↔ PATIENT_ID | 1:1 for all 1,137 people with a Strata patient record; 2 unresolved-residency D3 people have no patient record at all (waitlist PHN only). No split records, so no canonical-ID choice was needed. 59 cohort PHNs carry `IDENTIFIER1_IS_AUTOGEN = 1`, yet all 59 have registry rows and DOBs, so the flag does not mean a fabricated PHN here. |
+| Placeholder addresses | 17 flagged in the extract (including the new dummy patterns); none resolves residency. |
 
 ## Provisional pre-check on the rev 2.9 export (2026-09-03)
 

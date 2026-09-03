@@ -62,6 +62,9 @@ def q(xs, p):
     return xs[f] + (xs[c] - xs[f]) * (k - f)
 
 # ── origin-setting normalisation (built from the real vocabulary in the extract) ──
+def origin_source_type(v):
+    v = v or ""
+    return "waitlist current_location nearest DEMAND_DT" if v.startswith("waitlist current_location") else v if v else "(none)"
 def origin_detail(v):
     u = (v or "").upper().strip()
     if not u: return "Unknown"
@@ -122,7 +125,7 @@ def load_person(path, salt):
         d["LAST_SEEN_ON_LIST"] = col(r, "LAST_SEEN_ON_LIST")[:10]
         d["ON_LIST_AT_FOLLOWUP"] = col(r, "ON_LIST_AT_FOLLOWUP", "0")
         d["RATED_COCHRANE"] = col(r, "RATED_COCHRANE", "0")
-        d["REQUESTED_SITE"] = col(r, "REQUESTED_SITE"); d["REQUESTED_CARE_STREAM"] = col(r, "REQUESTED_CARE_STREAM")
+        d["REQUESTED_SITE"] = col(r, "REQUESTED_SITE") or ("(no site rated)" if col(r, "N_SITES_REQUESTED") == "0" else ""); d["REQUESTED_CARE_STREAM"] = col(r, "REQUESTED_CARE_STREAM")
         d["REQUESTED_COCHRANE_FLAG"] = col(r, "REQUESTED_COCHRANE_FLAG") or d["RATED_COCHRANE"]
         d["N_SITES_REQUESTED"] = col(r, "N_SITES_REQUESTED")
         # demographics — only from the extract, never derived from today
@@ -131,11 +134,17 @@ def load_person(path, salt):
         d["_pl"] = day(col(r, "FIRST_PLACEMENT_DT")); d["_fw"] = day(col(r, "FIRST_LIST_APPEARANCE"))
         d["AGE_AT_DEMAND"] = age_at(dob, d["_dem"]); d["AGE_AT_FIRST_WAITLIST"] = age_at(dob, d["_fw"])
         d["AGE_AT_PLACEMENT"] = age_at(dob, d["_pl"]); d["AGE_GROUP_AT_DEMAND"] = age_band(d["AGE_AT_DEMAND"])
+        if d.get("DOB_STRATA") is not None:
+            ds, dr = day(d["DOB_STRATA"]), day(d["DOB_REGISTRY"])
+            d["AGE_BAND_DEPENDS_ON_DOB_SOURCE"] = "1" if (ds and dr and age_band(age_at(ds, d["_dem"])) != age_band(age_at(dr, d["_dem"]))) else "0"
         # residence
         d["RESIDENCY_FINAL"] = col(r, "RESIDENCY_FINAL") or col(r, "RESIDENCY_LATEST")
         d["RESIDENCY_SOURCE"] = col(r, "RESIDENCY_SOURCE")
         d["RESIDENCE_COMMUNITY_AT_DEMAND"] = col(r, "RESIDENCE_COMMUNITY_AT_DEMAND")
         d["RESIDENCE_POSTAL_CODE_AT_DEMAND"] = col(r, "RESIDENCE_POSTAL_CODE_AT_DEMAND")
+        # a deciding postal code outside Alberta has no CSD in the Alberta lookup; the verdict rested on its first letter
+        if not d["RESIDENCE_COMMUNITY_AT_DEMAND"] and d["RESIDENCE_POSTAL_CODE_AT_DEMAND"] and d["RESIDENCE_POSTAL_CODE_AT_DEMAND"][0].upper() != "T":
+            d["RESIDENCE_COMMUNITY_AT_DEMAND"] = "Outside Alberta (postal " + d["RESIDENCE_POSTAL_CODE_AT_DEMAND"][:3].upper() + ")"
         d["COCHRANE_TOWN_FLAG"] = "1" if d["RESIDENCY_FINAL"] == TOWN else "0"
         d["COCHRANE_CATCHMENT_FLAG"] = "1" if d["RESIDENCY_FINAL"] == AREA else "0"
         d["RESIDENCY_EVIDENCE"] = col(r, "RESIDENCY_EVIDENCE")
@@ -167,6 +176,11 @@ def load_person(path, salt):
         d["PATIENT_ID_ALL"] = col(r, "PATIENT_ID_ALL"); d["N_PATIENT_IDS"] = col(r, "N_PATIENT_IDS")
         d["DOB_STRATA"] = col(r, "DOB_STRATA")[:10]; d["DOB_REGISTRY"] = col(r, "DOB_REGISTRY")[:10]
         d["DOB_SOURCES_AGREE"] = col(r, "DOB_SOURCES_AGREE"); d["SEX_CONFLICT_REGISTRY"] = col(r, "SEX_CONFLICT_REGISTRY")
+        ds, dr = day(d["DOB_STRATA"]), day(d["DOB_REGISTRY"])
+        d["DOB_DIFF_DAYS"] = abs((ds - dr).days) if (ds and dr) else ""
+        d["DOB_DISAGREE_OVER_1Y"] = "1" if (ds and dr and abs((ds - dr).days) > 366) else "0"
+        d["AGE_BAND_DEPENDS_ON_DOB_SOURCE"] = "1" if (ds and dr and age_band(age_at(ds, d["_dem"])) != age_band(age_at(dr, d["_dem"]))) else "0"
+        d["PHN_IS_AUTOGEN_ANY"] = col(r, "PHN_IS_AUTOGEN_ANY")
         d["RESIDENCE_LOCAL_NAME_AT_DEMAND"] = col(r, "RESIDENCE_LOCAL_NAME_AT_DEMAND"); d["ORIGIN_CENSUS_DATE"] = col(r, "ORIGIN_CENSUS_DATE")[:10]
         d["REQUESTED_COCHRANE_SITES"] = col(r, "REQUESTED_COCHRANE_SITES")
         d["_valid"] = d["IN_WINDOW"] == "1" and d["WAS_APPROVED"] == "1" and d["RECORD_VALID"] == "1"
@@ -295,7 +309,7 @@ def summaries(P, E):
     rows = []
     for lab, f in (("DOB", lambda p: p["DOB"]), ("sex/gender", lambda p: p["SEX"]), ("age at demand", lambda p: p["AGE_AT_DEMAND"] is not None),
                    ("community of residence", lambda p: p["RESIDENCE_COMMUNITY_AT_DEMAND"]), ("origin setting known", lambda p: p["ORIGIN_SETTING"] not in ("Unknown", "")),
-                   ("first placement site (placed only)", lambda p: (not p["_pl"]) or p["FIRST_PLACEMENT_SITE"]), ("requested site", lambda p: p["REQUESTED_SITE"])):
+                   ("first placement site (placed only)", lambda p: (not p["_pl"]) or p["FIRST_PLACEMENT_SITE"]), ("requested site (a rated site exists)", lambda p: p["REQUESTED_SITE"] and not p["REQUESTED_SITE"].startswith("(no"))):
         n = sum(1 for p in coh if f(p)); rows.append([lab, n, len(coh) - n, pct(n, len(coh))])
     S.append(md_table(["field", "present", "missing", "% present"], rows))
     S.append("### 4a. Residence — RESIDENCY_FINAL and community, A+B+C+D\n")
@@ -304,7 +318,7 @@ def summaries(P, E):
     S.append("### 4b. Origin setting — detail and coarse category, A+B+C+D\n")
     om = Counter((p["ORIGIN_SETTING"], p["ORIGIN_SETTING_DETAIL"]) for p in coh)
     S.append(md_table(["ORIGIN_SETTING", "detail", "people"], [[a, b, n] for (a, b), n in om.most_common()]))
-    S.append("Origin source: " + "; ".join(f"{k} ({v})" for k, v in Counter(p["ORIGIN_SOURCE"] for p in coh).most_common()) + "\n")
+    S.append("Origin source: " + "; ".join(f"{k} ({v})" for k, v in Counter(origin_source_type(p["ORIGIN_SOURCE"]) for p in coh).most_common()) + "\n")
     S.append("### 4c. Descriptive groups outside A-D (reported, not in any cohort)\n")
     S.append(md_table(["POPULATION", "people"], [[k, v] for k, v in sorted(Counter(p["POPULATION"] for p in P if p["POPULATION"] and p["POPULATION"] not in "ABCD").items())]))
     return "\n".join(S)
@@ -367,10 +381,12 @@ def main(a):
              + (f" — event table {len(E):,} qualifying admissions, {len({e['PHN'] for e in E}):,} people; Cochrane-site events {sum(1 for e in E if e['PLACEMENT_IN_COCHRANE']=='1'):,}; events of A-D people {sum(1 for e in E if e['PERSON_COHORT']):,}" if E else " — event table not supplied") + "\n")
     R.append(f"6. **Demographic completeness (A-D):** DOB {sum(1 for p in coh if p['DOB'])}/{len(coh)} (source: " + ", ".join(f"{k or 'none'} {v}" for k, v in Counter(p['DEMOGRAPHIC_SOURCE'] for p in coh).most_common()) + f"); sex/gender {sum(1 for p in coh if p['SEX'])}/{len(coh)}"
              + (f"; DOB in both sources {sum(1 for p in coh if p['DOB_SOURCES_AGREE'] != '')}, agree {sum(1 for p in coh if p['DOB_SOURCES_AGREE'] == '1')}, disagree {sum(1 for p in coh if p['DOB_SOURCES_AGREE'] == '0')}" if "DOB_SOURCES_AGREE" in have else "")
-             + (f"; registry sex conflicts {sum(1 for p in coh if p['SEX_CONFLICT_REGISTRY'] == '1')}" if "SEX_CONFLICT_REGISTRY" in have else "") + "\n")
+             + (f"; registry sex conflicts {sum(1 for p in coh if p['SEX_CONFLICT_REGISTRY'] == '1')}" if "SEX_CONFLICT_REGISTRY" in have else "")
+             + (f"; DOB sources more than a year apart {sum(1 for p in coh if p['DOB_DISAGREE_OVER_1Y'] == '1')}; age band at demand depends on which DOB source {sum(1 for p in coh if p['AGE_BAND_DEPENDS_ON_DOB_SOURCE'] == '1')}" if "DOB_STRATA" in have else "")
+             + (f"; PHN flagged IDENTIFIER1_IS_AUTOGEN {sum(1 for p in coh if p['PHN_IS_AUTOGEN_ANY'] == '1')} (all carry a registry row)" if "PHN_IS_AUTOGEN_ANY" in have else "") + "\n")
     R.append("7. **Age distribution:** " + (", ".join(f"{k} {v}" for k, v in sorted(Counter(p['AGE_GROUP_AT_DEMAND'] or '(missing)' for p in coh).items())) ) + "\n")
     R.append(f"8. **Residence-community completeness (A-D):** {sum(1 for p in coh if p['RESIDENCE_COMMUNITY_AT_DEMAND'])}/{len(coh)}; RESIDENCY_FINAL known {sum(1 for p in coh if p['RESIDENCY_FINAL'] != UNRES)}/{len(coh)}\n")
-    R.append(f"9. **Origin-setting completeness (A-D):** {sum(1 for p in coh if p['ORIGIN_SETTING'] != 'Unknown')}/{len(coh)}; source = " + "; ".join(f"{k} ({v})" for k, v in Counter(p['ORIGIN_SOURCE'] for p in coh).most_common()) + "\n")
+    R.append(f"9. **Origin-setting completeness (A-D):** {sum(1 for p in coh if p['ORIGIN_SETTING'] != 'Unknown')}/{len(coh)}; source = " + "; ".join(f"{k} ({v})" for k, v in Counter(origin_source_type(p['ORIGIN_SOURCE']) for p in coh).most_common()) + "\n")
     R.append("10. **PHN <-> Strata PATIENT_ID linkage (A-D):** " + ("; ".join(f"{k or 'unstated'} {v}" for k, v in Counter(p['PHN_PATIENT_ID_MULTIPLICITY'] for p in coh).most_common())
              + f"; universe: " + "; ".join(f"{k or 'unstated'} {v}" for k, v in Counter(p['PHN_PATIENT_ID_MULTIPLICITY'] for p in P).most_common())
              + ". PATIENT_ID -> PHN is one-to-one by construction (one IDENTIFIER1 per patient row). Canonical ID = the one carrying waitlist/admission activity, never MIN." if "PHN_PATIENT_ID_MULTIPLICITY" in have else "not in this extract — sql/13 block 1 reports it") + "\n")
