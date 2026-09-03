@@ -23,7 +23,7 @@ scripts. Every published figure traces to a numbered block in
 > consultant files with 35 QA gates and reproduces 89/148/192/69. Two
 > populations: INCIDENT_DEMAND_SCOPE 987 (holds A/B/C/D) and
 > CONSULTANT_ACTIVITY_SCOPE built from activity records with no demand gate
-> (1,130 before `sql/18` supplies attributes at the activity anchor). sql/09
+> (1,152 with attributes at the activity anchor from `sql/18`). sql/09
 > rev 2.10: an invalid postal code cannot establish residency. Findings and
 > the reviewers' corrections are in `reference/deliverable_design.md`.
 > Nothing is external until the reviewer clears `REVIEWER_PRECHECK.md`.

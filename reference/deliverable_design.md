@@ -69,6 +69,24 @@ spells in all. The fix is conceptual and touches no cohort.
 | 10 | 39 vs 40 outside-universe Cochrane events | distinct labels: 39 people have no attribute record at all; the 40th is the April-2020 carry-in person present in the QA table |
 | 11 | `Z1Z1Z1` must not establish residency | **done, sql/09 rev 2.10 + sql/14 + sql/18**: the non-Alberta branch requires a syntactically valid, non-dummy Canadian postal code. sql/14 re-run 2026-09-03 17:04: the Z1Z1Z1 person is now UNRESOLVED (X2 → X3); A/B/C/D 89/148/192/69 unchanged; the QA population gains one row (a second invalid-code person whose residency became unresolved and is therefore Cochrane-facing). All 35 gates pass |
 
+### Populations after the sql/18 run (2026-09-03 17:29, final pre-check)
+
+| measure | count |
+|---|---|
+| incident-demand people | 987 (A/B/C/D 89/148/192/69; D1–D3 13/25/31) |
+| unique people with a Cochrane-rated spell | 814 (697 incident, 117 outside) |
+| Town-resident people with a spell, residency at the activity anchor | 405 |
+| waitlist spells, activity scope / all | 2,443 / 66,432 |
+| Cochrane-facility placement events | 344 for 329 people |
+| consultant activity scope | 1,152 |
+| union in the consultant deliverables | 1,152 = 987 incident + 2 pre-window carry-in + 109 prior residential care before FY2022 + 54 other activity-only |
+| attributes available | 1,152 of 1,152; all 35 gates pass |
+
+Union-file demographics: age at anchor complete, median 83, bands <65 61 /
+65–74 170 / 75–84 426 / 85+ 495; sex 1,150 of 1,152 (Registry 1,141, Epic
+fallback 9); DOB consensus across all three sources 1,077; community 1,143
+(9 residency-unresolved); origin ties 41 of 1,152.
+
 ### Populations on the current extracts (before sql/18)
 
 | measure | count |
