@@ -17,6 +17,13 @@ scripts. Every published figure traces to a numbered block in
 > building normalisation are audit / QA flags only. Unresolved approved
 > unplaced 9 (was 11); D maximum 78.
 >
+> **Deliverable phase** (2026-09-03): `sql/13` inventories demographics,
+> PHN↔PATIENT_ID linkage, origin vocabulary and community columns;
+> `analysis/08` builds the person and event deliverables with QA gates and
+> reproduces 89/148/192/69 on today's extract. Plan and open decisions in
+> `reference/deliverable_design.md`. Nothing is published until the reviewer
+> clears the pre-check.
+>
 > Earlier status, rev 2.7 run — all seven gates closed: Definitions:
 > *new Type A/B demand arising FY2022–FY2026*; residency = registry latest
 > pre-demand address, else the Strata address effective at demand; B = any
