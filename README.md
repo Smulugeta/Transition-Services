@@ -28,7 +28,8 @@ scripts. Every published figure traces to a numbered block in
 > the reviewers' corrections are in `reference/deliverable_design.md`.
 > The reviewer cleared the build on 2026-09-03 (43 gates). `analysis/09` writes
 > the plain-language logic page, client-list guide and analysis summary from
-> the build outputs; `build/md-to-docx.js` renders them to Word. Release of
+> the build outputs; `build/md-to-docx.js` renders them to Word; `analysis/10`
+> builds the explained workbook (live formulas, QA sheet) from the release CSVs. Release of
 > the consultant files is the user's decision.
 >
 > Earlier status, rev 2.7 run — all seven gates closed: Definitions:
