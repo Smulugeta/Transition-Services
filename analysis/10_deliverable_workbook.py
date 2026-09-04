@@ -152,28 +152,26 @@ def main(a):
     ws = wb.create_sheet("START HERE"); ws.column_dimensions["A"].width = 30
     for col in "BCDEFGH": ws.column_dimensions[col].width = 18
     r = text_block(ws, 1, [
-        ("t", "Cochrane Type A/B continuing-care demand, FY2022 to FY2026 — how to read this workbook"),
-        ("m", "Five fiscal years, 1 April 2021 to 31 March 2026. Type A = long-term care; Type B = designated supportive living level 4. Cochrane facilities = Bethany Cochrane LTC, Hawthorne SL4, Hawthorne SL4D. Big Hill Lodge is outside this extract."),
-        None, ("h", "Two populations. Keeping them apart is the key to explaining every number.")])
-    r = table(ws, r, ["Population", "Plain meaning", "People", "Technical field"], [
-        ["1. New demand in the five years", "People whose need for a Type A/B bed FIRST arose between April 2021 and March 2026 and who have some link to Cochrane. The cohorts A, B, C and D are built from these people only.", len(inc), "INCIDENT_DEMAND_SCOPE = Yes"],
-        ["2. Cochrane-related activity in the five years", "Anyone who, at any time in the five years, rated a Cochrane site on the waitlist, was on the waitlist while living in the Town, or was admitted to a Cochrane facility. No test on when their need first arose.", n_act, "CONSULTANT_ACTIVITY_SCOPE = Yes"],
-        ["Everyone in the client list (each person once)", "Population 1 and Population 2 together. Two Yes/No columns say which a person belongs to.", len(D), ""]])
-    r = text_block(ws, r, [("h", "The four cohorts (Population 1 only). Explain these first.")])
-    r = table(ws, r, ["Cohort", "Who", "People", "What it tells you"], [
-        ["A", "Town of Cochrane resident, first placed IN a Cochrane facility", c["A"], "Town demand met in Town."],
-        ["B", "NOT a Town resident (includes the catchment), placed in a Cochrane facility", c["B"], "Use of Cochrane beds by people from outside the Town. Never part of resident demand."],
-        ["C", "Town of Cochrane resident, first placed OUTSIDE Cochrane", c["C"], "Town demand met elsewhere, at least at first."],
-        ["D", "Town of Cochrane resident, NO Type A/B placement observed by 31 March 2026", c["D"], f"Still waiting {dc['D1']}, died before placement {dc['D2']}, left the list {dc['D3']}. Not proof of unmet need across Alberta."]])
-    r = text_block(ws, r, [("k", f"THE NUMBER TO REMEMBER:  A + C + D  =  {c['A']} + {c['C']} + {c['D']}  =  {res}  Town of Cochrane residents with new Type A/B demand in the five years.   Do NOT add B."), None,
-        ("h", "Why 987 people in Population 1 but only 498 in A to D?"),
-        f"Because A to D need a Town of Cochrane residence or a placement in a Cochrane facility. The other {len(inc)-len(coh)} are new-demand people who rated a Cochrane site but live elsewhere, or whose residence could not be resolved, or who reached Cochrane only after a first placement elsewhere. They stay in the list, labelled in the 'Group (in words)' column, so nothing Cochrane-related is lost.", None,
-        ("h", "The 30-second explanation"),
-        f"\"We separate new demand from activity. New demand is whose need for a Type A/B bed first arose in the five years: {len(inc)} people with a Cochrane link, of whom {res} were Town of Cochrane residents. Of those {res}, {c['A']} were placed in Cochrane, {c['C']} were placed outside Cochrane and {c['D']} had no placement observed by March 2026. Separately, {c['B']} people from outside the Town were placed in Cochrane beds. Activity is everything that touched Cochrane in the five years, {n_act} people, including people whose need began earlier; the waitlist and placement sheets count that activity by year.\"", None,
-        ("h", "Where to look"),
-        "HOW PEOPLE ARE COUNTED — the rules, step by step.   HEADLINE — the findings; every number is a live formula over the data sheets, shown beside the accepted value.   CLIENT LIST — one row per person.   WAITLIST ACTIVITY — one row per waitlist spell.   PLACEMENT ACTIVITY — one row per Type A/B admission.   DATA DICTIONARY — what every column means and the technical field behind it.   QA CHECKS — live checks that the workbook still reconciles.", None,
-        ("h", "Things never to say"),
-        "• \"D never got a bed anywhere in Alberta\" — D means no placement was recorded in the Calgary and Edmonton placement systems by 31 March 2026.   • \"B is Cochrane demand\" — B lives outside the Town.   • \"Preferred facility\" — the waitlist records which sites a person was RATED for; whether that is a preference has not been confirmed.   • \"C never reached Cochrane\" — C is the first placement; the PLACEMENT ACTIVITY sheet shows later moves into Cochrane."])
+        ("t", "Cochrane Type A/B continuing-care demand, FY2022 to FY2026"),
+        ("m", "Five fiscal years, 1 April 2021 to 31 March 2026. Type A = long-term care; Type B = designated supportive living level 4. Cochrane facilities = Bethany Cochrane LTC, Hawthorne SL4, Hawthorne SL4D. Big Hill Lodge is outside this extract. Fiscal years are named by the year they end: FY2023 is April 2022 to March 2023."),
+        None, ("h", "Two populations")])
+    r = table(ws, r, ["Population", "Definition", "People", "Field in the client list"], [
+        ["1. New demand in the five years", "People whose need for a Type A/B bed first arose between April 2021 and March 2026 and who have a link to Cochrane. The cohorts A, B, C and D are defined within this population only.", len(inc), "New demand FY2022-FY2026? = Yes"],
+        ["2. Cochrane-related activity in the five years", "People who, at any time in the five years, rated a Cochrane site on the waitlist, were on the waitlist while living in the Town of Cochrane, or were admitted to a Cochrane facility, whenever their need first arose.", n_act, "Cochrane activity FY2022-FY2026? = Yes"],
+        ["Client list", "Population 1 and Population 2 together, each person once. Two Yes/No columns record membership.", len(D), ""]])
+    r = text_block(ws, r, [("h", "The four cohorts (Population 1)")])
+    r = table(ws, r, ["Cohort", "Definition", "People", "Note"], [
+        ["A", "Town of Cochrane resident; first placed in a Cochrane facility", c["A"], ""],
+        ["B", "Not a Town of Cochrane resident (the Cochrane catchment included); placed in a Cochrane facility", c["B"], "Use of Cochrane beds by people from outside the Town. Not part of resident demand."],
+        ["C", "Town of Cochrane resident; first placed outside Cochrane", c["C"], "Based on the first placement; later moves into Cochrane appear in PLACEMENT ACTIVITY."],
+        ["D", "Town of Cochrane resident; no Type A/B placement observed by 31 March 2026", c["D"], f"D1 still waiting {dc['D1']}; D2 died before placement {dc['D2']}; D3 left the list {dc['D3']}."]])
+    r = text_block(ws, r, [("k", f"Town of Cochrane resident demand = A + C + D = {c['A']} + {c['C']} + {c['D']} = {res}. B is reported separately."), None,
+        ("h", "Population 1 beyond the four cohorts"),
+        f"{len(inc)-len(coh)} people in Population 1 fall outside A to D: they rated a Cochrane site but live elsewhere, or their residence could not be resolved, or they reached a Cochrane facility only after a first placement elsewhere. They remain in the client list with a descriptive entry in the 'Group (in words)' column.", None,
+        ("h", "How the sheets fit together"),
+        "HOW PEOPLE ARE COUNTED sets out the rules step by step. HEADLINE holds the findings; each figure is a formula over the data sheets, shown beside the value reproduced by the independent reviewer. CLIENT LIST has one row per person, WAITLIST ACTIVITY one row per waitlist spell, PLACEMENT ACTIVITY one row per Type A/B admission. The anonymous Study ID links the three. DATA DICTIONARY defines every column. QA CHECKS recalculates the reconciliation checks from the data sheets.", None,
+        ("h", "Scope notes"),
+        "D means that no Type A/B placement was recorded in the Calgary and Edmonton placement systems by 31 March 2026; it is not a measure of unmet need across Alberta.   C reflects the first placement only.   'Rated for a Cochrane site' is what the waitlist recorded; whether it represents a stated preference has not been confirmed with the program.   A person can have several waitlist spells and several admissions; the activity sheets count spells and admissions, the client list counts people.   No health number, date of birth, patient system number, address or postal code appears in this workbook."])
 
     # ── HOW PEOPLE ARE COUNTED ───────────────────────────────────────────────
     ws = wb.create_sheet("HOW PEOPLE ARE COUNTED"); ws.column_dimensions["A"].width = 30
