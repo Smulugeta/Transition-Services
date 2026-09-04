@@ -69,6 +69,24 @@ spells in all. The fix is conceptual and touches no cohort.
 | 10 | 39 vs 40 outside-universe Cochrane events | resolved with distinct labels. The earlier "40" folded in the X4 person (in incident scope, unlabelled at the time). Final: 344 Cochrane-site admissions = 237 first placements of A/B + 29 incident-scope X1–X4 + 24 later moves of C people + 15 later moves of A/B people + 39 people outside incident demand (21 in prior residential care before FY2022, 18 with earlier or non-new demand). Neither April-2020 carry-in person has a Cochrane-site admission |
 | 11 | `Z1Z1Z1` must not establish residency | **done, sql/09 rev 2.10 + sql/14 + sql/18**: the non-Alberta branch requires a syntactically valid, non-dummy Canadian postal code. sql/14 re-run 2026-09-03 17:04: the Z1Z1Z1 person is now UNRESOLVED (X2 → X3); A/B/C/D 89/148/192/69 unchanged; the QA population gains one row (a second invalid-code person whose residency became unresolved and is therefore Cochrane-facing). All 35 gates pass |
 
+### Tenth review — placement flag, and the plain-language documents (2026-09-03)
+
+`IS_FIRST_PLACEMENT_INCIDENT` flagged the 2022-09-16 admission of a pre-window
+carry-in person (study ID CD-50487240931F) because it tested only "first
+qualifying placement of this person". It now also requires
+`INCIDENT_DEMAND_SCOPE = 1`; a separate `IS_FIRST_PLACEMENT_IN_WINDOW` marks
+anyone's first Type A/B admission in the five years. Summary 3b: first
+placements of incident-demand people 147 / 164 / 163 / 200 / 156 = 830. Three
+fatal gates added: SUM(flag) = incident people with a placement; flag ⇒
+incident membership; every placed incident person has a flagged event. Gates 43.
+
+`analysis/09_deliverable_docs.py` writes three plain-language documents from
+the build outputs (no hand-typed numbers), and `build/md-to-docx.js` renders
+them to Word: **COCHRANE_LOGIC_PAGE** (how every person is counted, two
+populations with plain names, the cohorts, what the numbers are not),
+**COCHRANE_CLIENT_LIST_GUIDE** (every column of the three files in plain
+English, with two worked rows), **COCHRANE_ANALYSIS_SUMMARY** (the findings).
+
 ### Reporting correction and release gates (2026-09-03, ninth review)
 
 The summary's "A+C+D resident demand" column by DEMAND_FYE showed 173 / 179 /

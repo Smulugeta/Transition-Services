@@ -308,6 +308,10 @@ def qa(P, U, expect, have, E, W, A):
         chk("placed A-D person whose first placement is absent from the event table", sum(1 for p in placed if (p["PHN"], p["_pl"]) not in first_ev))
         chk("event outside 2021-04-01..2026-03-31", sum(1 for e in E if e["_ad"] and not (WIN_START <= e["_ad"] <= FOLLOW_UP))); chk("event with no PHN", sum(1 for e in E if not e["PHN"]))
         chk("Cochrane-site event whose person is missing from the consultant file", sum(1 for e in E if e["PLACEMENT_IN_COCHRANE"] == "1" and (e["PHN"] not in U or U[e["PHN"]]["IN_CONSULTANT_DELIVERABLE"] != "1")))
+        flag = [e for e in E if (P.get(e["PHN"]) or {}).get("INCIDENT_DEMAND_SCOPE") == "1" and P[e["PHN"]]["_pl"] == e["_ad"]]
+        chk("SUM(IS_FIRST_PLACEMENT_INCIDENT) != incident-demand people with FIRST_PLACEMENT_DT", abs(len(flag) - sum(1 for p in inc if p["_pl"])))
+        chk("IS_FIRST_PLACEMENT_INCIDENT = 1 for a person outside INCIDENT_DEMAND_SCOPE", sum(1 for e in flag if P[e["PHN"]]["INCIDENT_DEMAND_SCOPE"] != "1"))
+        chk("incident-demand person with FIRST_PLACEMENT_DT but no flagged event", sum(1 for p in inc if p["_pl"] and (p["PHN"], p["_pl"]) not in {(e["PHN"], e["_ad"]) for e in flag}))
     if W is not None:
         byp = defaultdict(list)
         for w in W: byp[w["PHN"]].append(w)
@@ -379,7 +383,7 @@ def summaries(P, U, E, W):
         Ec = [e for e in E if e["PLACEMENT_IN_COCHRANE"] == "1"]
         for e in E:
             u = U.get(e["PHN"]); e["_rc"] = u["ACTIVITY_RESIDENCE_CLASS"] if u else "not in person tables"; e["_st"] = u["ACTIVITY_STATUS"].split(":")[0] if u else "not in person tables"
-            p = P.get(e["PHN"]); e["_first"] = "1" if (p and p["_pl"] == e["_ad"]) else "0"; e["_coh"] = p["COHORT"] if p else ""
+            p = P.get(e["PHN"]); e["_first"] = "1" if (p and p["INCIDENT_DEMAND_SCOPE"] == "1" and p["_pl"] == e["_ad"]) else "0"; e["_coh"] = p["COHORT"] if p else ""
         S.append("### 3a. Cochrane facilities — every admission to Bethany Cochrane LTC, Hawthorne SL4, Hawthorne SL4D, whoever the person is\n")
         S.append(md(["FYE", "placement events", "unique people", "Bethany Cochrane LTC", "Hawthorne SL4", "Hawthorne SL4D", "Type A", "Type B", "Town", "catchment", "non-Town", "unresolved", "no person attributes"],
             by_fye(Ec, "PLACEMENT_FYE", lambda ys: [len(ys), len({e["PHN"] for e in ys})] + [sum(1 for e in ys if e["PLACEMENT_SITE"] == s_) for s_ in SITES] + [sum(1 for e in ys if e["CARE_STREAM"] == s_) for s_ in ("Type A", "Type B")] + [Counter(e["_rc"] for e in ys)[k] for k in ("Town", "Cochrane catchment", "non-Town", "unresolved", "not in person tables")])))
@@ -392,7 +396,7 @@ def summaries(P, U, E, W):
         S.append("Who the Cochrane-site admissions are (A+B first placements = 237; every other row is activity the person grain does not count):\n" + md(["FYE"] + cats, by_fye(Ec, "PLACEMENT_FYE", lambda ys: [sum(1 for e in ys if cat(e) == c_) for c_ in cats])))
         actset = {u["PHN"] for u in D}; Ep = [e for e in E if e["PHN"] in actset]
         S.append("### 3b. All qualifying Type A/B admissions of people in the consultant person file, any site\n")
-        S.append(md(["FYE", "placement events", "unique people placed", "in Cochrane", "outside Cochrane", "Type A", "Type B", "first placements (incident)", "other admissions"],
+        S.append(md(["FYE", "placement events", "unique people placed", "in Cochrane", "outside Cochrane", "Type A", "Type B", "first placements of incident-demand people", "other admissions"],
             by_fye(Ep, "PLACEMENT_FYE", lambda ys: [len(ys), len({e["PHN"] for e in ys}), sum(1 for e in ys if e["PLACEMENT_IN_COCHRANE"] == "1"), sum(1 for e in ys if e["PLACEMENT_IN_COCHRANE"] != "1"), sum(1 for e in ys if e["CARE_STREAM"] == "Type A"), sum(1 for e in ys if e["CARE_STREAM"] == "Type B"), sum(1 for e in ys if e["_first"] == "1"), sum(1 for e in ys if e["_first"] != "1")])))
         S.append("Origin (admission source_location) of those events: " + "; ".join(f"{k} {v}" for k, v in Counter(e["ORIGIN_SETTING"] for e in Ep).most_common()) + ".\n")
     else: S.append("Event table not supplied.\n")
@@ -427,7 +431,7 @@ PERSON_CONSULTANT = ["STUDY_ID", "INCIDENT_DEMAND_SCOPE", "CONSULTANT_ACTIVITY_S
     "RESIDENCY_FINAL", "RESIDENCE_CLASS", "RESIDENCE_COMMUNITY", "RESIDENCE_COMMUNITY_SOURCE", "RESIDENCE_REFERENCE_TYPE", "RESIDENCE_REFERENCE_FYE", "COCHRANE_TOWN_FLAG", "COCHRANE_CATCHMENT_FLAG",
     "ORIGIN_SETTING", "ORIGIN_SETTING_DETAIL", "ORIGIN_SITE", "ORIGIN_CONFLICT_FLAG", "MOST_FREQUENTLY_OBSERVED_RATED_SITE", "RATED_CARE_STREAM_MOST_FREQUENT", "N_SITES_RATED", "RATED_FOR_COCHRANE_SITE_FLAG", "COCHRANE_SITES_RATED",
     "FIRST_PLACEMENT_DT", "PLACEMENT_FYE", "FIRST_PLACEMENT_SITE", "FIRST_PLACEMENT_STREAM", "FIRST_PLACEMENT_IN_COCHRANE", "ACTIVITY_COCHRANE_ADMISSION", "DAYS_TO_PLACEMENT", "DAYS_TO_PLACEMENT_ALT", "DAYS_WAITING_AS_OF_FOLLOWUP"]
-EVENT_CONSULTANT = ["STUDY_ID", "ADMISSION_DT", "PLACEMENT_FYE", "PLACEMENT_SITE", "CARE_STREAM", "PLACEMENT_IN_COCHRANE", "ORIGIN_SETTING", "ORIGIN_SETTING_DETAIL", "IS_FIRST_PLACEMENT_INCIDENT", "EVENT_SEQ_FOR_PERSON", "PERSON_RESIDENCE_CLASS", "PERSON_RESIDENCE_COMMUNITY", "PERSON_ACTIVITY_STATUS", "PERSON_COHORT", "PERSON_POPULATION"]
+EVENT_CONSULTANT = ["STUDY_ID", "ADMISSION_DT", "PLACEMENT_FYE", "PLACEMENT_SITE", "CARE_STREAM", "PLACEMENT_IN_COCHRANE", "ORIGIN_SETTING", "ORIGIN_SETTING_DETAIL", "IS_FIRST_PLACEMENT_INCIDENT", "IS_FIRST_PLACEMENT_IN_WINDOW", "EVENT_SEQ_FOR_PERSON", "PERSON_RESIDENCE_CLASS", "PERSON_RESIDENCE_COMMUNITY", "PERSON_ACTIVITY_STATUS", "PERSON_COHORT", "PERSON_POPULATION"]
 WAIT_CONSULTANT = ["STUDY_ID", "SPELL_SEQ_FOR_PERSON", "LIST_ENTRY_DT", "LIST_ENTRY_FYE", "LIST_LAST_SEEN_DT", "DAYS_OBSERVED", "CARE_STREAM_AT_ENTRY", "ORIGIN_SETTING", "ORIGIN_SETTING_DETAIL", "ORIGIN_CONFLICT_FLAG", "FIRST_APPROVED_DT_IN_SPELL", "RATED_COCHRANE_IN_SPELL", "LEFT_TRUNCATED", "ON_LIST_AT_FOLLOWUP", "PERSON_RESIDENCE_CLASS", "PERSON_ACTIVITY_STATUS", "PERSON_COHORT"]
 def write_csv(path, rows, fields):
     with open(path, "w", newline="") as f:
@@ -486,9 +490,13 @@ def main(a):
     write_csv(os.path.join(a.out, "COCHRANE_DEMAND_CONSULTANT.csv"), D, PERSON_CONSULTANT)
     if E:
         Dset = {u["PHN"] for u in D}; Ev = [e for e in E if e["PLACEMENT_IN_COCHRANE"] == "1" or e["PHN"] in Dset]
+        first_in_window = {}
+        for e in sorted(E, key=lambda e: (e["_ad"], e["ADMISSION_NOTICE_ID"])): first_in_window.setdefault(e["PHN"], e["_ad"])
         for e in Ev:
             u = U.get(e["PHN"]); p = P.get(e["PHN"])
-            e["IS_FIRST_PLACEMENT_INCIDENT"] = "1" if (p and p["_pl"] == e["_ad"]) else "0"; e["PERSON_RESIDENCE_CLASS"] = u["ACTIVITY_RESIDENCE_CLASS"] if u else "not in person tables"
+            e["IS_FIRST_PLACEMENT_INCIDENT"] = "1" if (p and p["INCIDENT_DEMAND_SCOPE"] == "1" and p["_pl"] == e["_ad"]) else "0"
+            e["IS_FIRST_PLACEMENT_IN_WINDOW"] = "1" if first_in_window.get(e["PHN"]) == e["_ad"] else "0"
+            e["PERSON_RESIDENCE_CLASS"] = u["ACTIVITY_RESIDENCE_CLASS"] if u else "not in person tables"
             e["PERSON_RESIDENCE_COMMUNITY"] = u["RESIDENCE_COMMUNITY"] if u else ""; e["PERSON_ACTIVITY_STATUS"] = u["ACTIVITY_STATUS"].split(":")[0] if u else "not in person tables"; e["PERSON_COHORT"] = p["COHORT"] if p else ""; e["PERSON_POPULATION"] = u["POPULATION"] if u else ""
         write_csv(os.path.join(a.out, "COCHRANE_PLACEMENT_ACTIVITY_INTERNAL.csv"), Ev, [k for k in Ev[0].keys() if not k.startswith("_")]); write_csv(os.path.join(a.out, "COCHRANE_PLACEMENT_ACTIVITY_CONSULTANT.csv"), Ev, EVENT_CONSULTANT)
     if W:

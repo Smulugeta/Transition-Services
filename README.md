@@ -26,9 +26,10 @@ scripts. Every published figure traces to a numbered block in
 > (1,152 with attributes at the activity anchor from `sql/18`). sql/09
 > rev 2.10: an invalid postal code cannot establish residency. Findings and
 > the reviewers' corrections are in `reference/deliverable_design.md`.
-> The reviewer cleared the build on 2026-09-03 once the resident-demand-by-year
-> column was corrected (40 gates); release of the four consultant files is the
-> user's decision.
+> The reviewer cleared the build on 2026-09-03 (43 gates). `analysis/09` writes
+> the plain-language logic page, client-list guide and analysis summary from
+> the build outputs; `build/md-to-docx.js` renders them to Word. Release of
+> the consultant files is the user's decision.
 >
 > Earlier status, rev 2.7 run — all seven gates closed: Definitions:
 > *new Type A/B demand arising FY2022–FY2026*; residency = registry latest
